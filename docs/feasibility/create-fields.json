@@ -1,0 +1,807 @@
+{
+  "observedDate": "2026-09-26",
+  "source": "Atlassian connector getJiraIssueTypeMetaWithFields",
+  "projectKey": "CK",
+  "scope": "Create metadata only; not edit/transition compatibility. Allowed values summarized by count.",
+  "issueTypes": [
+    {
+      "issueType": "10000",
+      "total": 18,
+      "fields": [
+        {
+          "fieldId": "assignee",
+          "name": "Assignee",
+          "required": false,
+          "schema": {
+            "type": "user"
+          }
+        },
+        {
+          "fieldId": "attachment",
+          "name": "Attachment",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "attachment"
+          }
+        },
+        {
+          "fieldId": "components",
+          "name": "Components",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "component"
+          },
+          "allowedValueCount": 0
+        },
+        {
+          "fieldId": "customfield_10001",
+          "name": "Team",
+          "required": false,
+          "schema": {
+            "type": "team"
+          }
+        },
+        {
+          "fieldId": "customfield_10020",
+          "name": "Sprint",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "json"
+          }
+        },
+        {
+          "fieldId": "customfield_10031",
+          "name": "Story Points",
+          "required": false,
+          "schema": {
+            "type": "number"
+          }
+        },
+        {
+          "fieldId": "customfield_10050",
+          "name": "Linked items",
+          "required": false,
+          "schema": {
+            "type": "number"
+          }
+        },
+        {
+          "fieldId": "description",
+          "name": "Description",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "fieldId": "duedate",
+          "name": "Due date",
+          "required": false,
+          "schema": {
+            "type": "date"
+          }
+        },
+        {
+          "fieldId": "fixVersions",
+          "name": "Fix versions",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "version"
+          },
+          "allowedValueCount": 152
+        },
+        {
+          "fieldId": "issuelinks",
+          "name": "Linked Issues",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "issuelinks"
+          }
+        },
+        {
+          "fieldId": "issuetype",
+          "name": "Issue Type",
+          "required": true,
+          "schema": {
+            "type": "issuetype"
+          },
+          "allowedValueCount": 1
+        },
+        {
+          "fieldId": "labels",
+          "name": "Labels",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "string"
+          }
+        },
+        {
+          "fieldId": "parent",
+          "name": "Parent",
+          "required": false,
+          "schema": {
+            "type": "issuelink"
+          }
+        },
+        {
+          "fieldId": "priority",
+          "name": "Priority",
+          "required": false,
+          "schema": {
+            "type": "priority"
+          },
+          "allowedValueCount": 2
+        },
+        {
+          "fieldId": "project",
+          "name": "Project",
+          "required": true,
+          "schema": {
+            "type": "project"
+          },
+          "allowedValueCount": 1
+        },
+        {
+          "fieldId": "reporter",
+          "name": "Reporter",
+          "required": true,
+          "schema": {
+            "type": "user"
+          }
+        },
+        {
+          "fieldId": "summary",
+          "name": "Summary",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    {
+      "issueType": "10003",
+      "total": 18,
+      "fields": [
+        {
+          "fieldId": "assignee",
+          "name": "Assignee",
+          "required": false,
+          "schema": {
+            "type": "user"
+          }
+        },
+        {
+          "fieldId": "attachment",
+          "name": "Attachment",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "attachment"
+          }
+        },
+        {
+          "fieldId": "components",
+          "name": "Components",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "component"
+          },
+          "allowedValueCount": 0
+        },
+        {
+          "fieldId": "customfield_10001",
+          "name": "Team",
+          "required": false,
+          "schema": {
+            "type": "team"
+          }
+        },
+        {
+          "fieldId": "customfield_10020",
+          "name": "Sprint",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "json"
+          }
+        },
+        {
+          "fieldId": "customfield_10031",
+          "name": "Story Points",
+          "required": false,
+          "schema": {
+            "type": "number"
+          }
+        },
+        {
+          "fieldId": "customfield_10050",
+          "name": "Linked items",
+          "required": false,
+          "schema": {
+            "type": "number"
+          }
+        },
+        {
+          "fieldId": "description",
+          "name": "Description",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "fieldId": "duedate",
+          "name": "Due date",
+          "required": false,
+          "schema": {
+            "type": "date"
+          }
+        },
+        {
+          "fieldId": "fixVersions",
+          "name": "Fix versions",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "version"
+          },
+          "allowedValueCount": 152
+        },
+        {
+          "fieldId": "issuelinks",
+          "name": "Linked Issues",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "issuelinks"
+          }
+        },
+        {
+          "fieldId": "issuetype",
+          "name": "Issue Type",
+          "required": true,
+          "schema": {
+            "type": "issuetype"
+          },
+          "allowedValueCount": 1
+        },
+        {
+          "fieldId": "labels",
+          "name": "Labels",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "string"
+          }
+        },
+        {
+          "fieldId": "parent",
+          "name": "Parent",
+          "required": false,
+          "schema": {
+            "type": "issuelink"
+          }
+        },
+        {
+          "fieldId": "priority",
+          "name": "Priority",
+          "required": false,
+          "schema": {
+            "type": "priority"
+          },
+          "allowedValueCount": 2
+        },
+        {
+          "fieldId": "project",
+          "name": "Project",
+          "required": true,
+          "schema": {
+            "type": "project"
+          },
+          "allowedValueCount": 1
+        },
+        {
+          "fieldId": "reporter",
+          "name": "Reporter",
+          "required": true,
+          "schema": {
+            "type": "user"
+          }
+        },
+        {
+          "fieldId": "summary",
+          "name": "Summary",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    {
+      "issueType": "10004",
+      "total": 18,
+      "fields": [
+        {
+          "fieldId": "assignee",
+          "name": "Assignee",
+          "required": false,
+          "schema": {
+            "type": "user"
+          }
+        },
+        {
+          "fieldId": "attachment",
+          "name": "Attachment",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "attachment"
+          }
+        },
+        {
+          "fieldId": "components",
+          "name": "Components",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "component"
+          },
+          "allowedValueCount": 0
+        },
+        {
+          "fieldId": "customfield_10001",
+          "name": "Team",
+          "required": false,
+          "schema": {
+            "type": "team"
+          }
+        },
+        {
+          "fieldId": "customfield_10020",
+          "name": "Sprint",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "json"
+          }
+        },
+        {
+          "fieldId": "customfield_10031",
+          "name": "Story Points",
+          "required": false,
+          "schema": {
+            "type": "number"
+          }
+        },
+        {
+          "fieldId": "customfield_10050",
+          "name": "Linked items",
+          "required": false,
+          "schema": {
+            "type": "number"
+          }
+        },
+        {
+          "fieldId": "description",
+          "name": "Description",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "fieldId": "duedate",
+          "name": "Due date",
+          "required": false,
+          "schema": {
+            "type": "date"
+          }
+        },
+        {
+          "fieldId": "fixVersions",
+          "name": "Fix versions",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "version"
+          },
+          "allowedValueCount": 152
+        },
+        {
+          "fieldId": "issuelinks",
+          "name": "Linked Issues",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "issuelinks"
+          }
+        },
+        {
+          "fieldId": "issuetype",
+          "name": "Issue Type",
+          "required": true,
+          "schema": {
+            "type": "issuetype"
+          },
+          "allowedValueCount": 1
+        },
+        {
+          "fieldId": "labels",
+          "name": "Labels",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "string"
+          }
+        },
+        {
+          "fieldId": "parent",
+          "name": "Parent",
+          "required": false,
+          "schema": {
+            "type": "issuelink"
+          }
+        },
+        {
+          "fieldId": "priority",
+          "name": "Priority",
+          "required": false,
+          "schema": {
+            "type": "priority"
+          },
+          "allowedValueCount": 2
+        },
+        {
+          "fieldId": "project",
+          "name": "Project",
+          "required": true,
+          "schema": {
+            "type": "project"
+          },
+          "allowedValueCount": 1
+        },
+        {
+          "fieldId": "reporter",
+          "name": "Reporter",
+          "required": true,
+          "schema": {
+            "type": "user"
+          }
+        },
+        {
+          "fieldId": "summary",
+          "name": "Summary",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    {
+      "issueType": "10005",
+      "total": 17,
+      "fields": [
+        {
+          "fieldId": "assignee",
+          "name": "Assignee",
+          "required": false,
+          "schema": {
+            "type": "user"
+          }
+        },
+        {
+          "fieldId": "attachment",
+          "name": "Attachment",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "attachment"
+          }
+        },
+        {
+          "fieldId": "components",
+          "name": "Components",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "component"
+          },
+          "allowedValueCount": 0
+        },
+        {
+          "fieldId": "customfield_10001",
+          "name": "Team",
+          "required": false,
+          "schema": {
+            "type": "team"
+          }
+        },
+        {
+          "fieldId": "customfield_10020",
+          "name": "Sprint",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "json"
+          }
+        },
+        {
+          "fieldId": "customfield_10050",
+          "name": "Linked items",
+          "required": false,
+          "schema": {
+            "type": "number"
+          }
+        },
+        {
+          "fieldId": "description",
+          "name": "Description",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "fieldId": "duedate",
+          "name": "Due date",
+          "required": false,
+          "schema": {
+            "type": "date"
+          }
+        },
+        {
+          "fieldId": "fixVersions",
+          "name": "Fix versions",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "version"
+          },
+          "allowedValueCount": 152
+        },
+        {
+          "fieldId": "issuelinks",
+          "name": "Linked Issues",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "issuelinks"
+          }
+        },
+        {
+          "fieldId": "issuetype",
+          "name": "Issue Type",
+          "required": true,
+          "schema": {
+            "type": "issuetype"
+          },
+          "allowedValueCount": 1
+        },
+        {
+          "fieldId": "labels",
+          "name": "Labels",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "string"
+          }
+        },
+        {
+          "fieldId": "parent",
+          "name": "Parent",
+          "required": true,
+          "schema": {
+            "type": "issuelink"
+          }
+        },
+        {
+          "fieldId": "priority",
+          "name": "Priority",
+          "required": false,
+          "schema": {
+            "type": "priority"
+          },
+          "allowedValueCount": 2
+        },
+        {
+          "fieldId": "project",
+          "name": "Project",
+          "required": true,
+          "schema": {
+            "type": "project"
+          },
+          "allowedValueCount": 1
+        },
+        {
+          "fieldId": "reporter",
+          "name": "Reporter",
+          "required": true,
+          "schema": {
+            "type": "user"
+          }
+        },
+        {
+          "fieldId": "summary",
+          "name": "Summary",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    {
+      "issueType": "10006",
+      "total": 18,
+      "fields": [
+        {
+          "fieldId": "assignee",
+          "name": "Assignee",
+          "required": false,
+          "schema": {
+            "type": "user"
+          }
+        },
+        {
+          "fieldId": "attachment",
+          "name": "Attachment",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "attachment"
+          }
+        },
+        {
+          "fieldId": "components",
+          "name": "Components",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "component"
+          },
+          "allowedValueCount": 0
+        },
+        {
+          "fieldId": "customfield_10001",
+          "name": "Team",
+          "required": false,
+          "schema": {
+            "type": "team"
+          }
+        },
+        {
+          "fieldId": "customfield_10020",
+          "name": "Sprint",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "json"
+          }
+        },
+        {
+          "fieldId": "description",
+          "name": "Description",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "fieldId": "duedate",
+          "name": "Due date",
+          "required": false,
+          "schema": {
+            "type": "date"
+          }
+        },
+        {
+          "fieldId": "environment",
+          "name": "Environment",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "fieldId": "fixVersions",
+          "name": "Fix versions",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "version"
+          },
+          "allowedValueCount": 152
+        },
+        {
+          "fieldId": "issuelinks",
+          "name": "Linked Issues",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "issuelinks"
+          }
+        },
+        {
+          "fieldId": "issuetype",
+          "name": "Issue Type",
+          "required": true,
+          "schema": {
+            "type": "issuetype"
+          },
+          "allowedValueCount": 1
+        },
+        {
+          "fieldId": "labels",
+          "name": "Labels",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "string"
+          }
+        },
+        {
+          "fieldId": "parent",
+          "name": "Parent",
+          "required": false,
+          "schema": {
+            "type": "issuelink"
+          }
+        },
+        {
+          "fieldId": "priority",
+          "name": "Priority",
+          "required": false,
+          "schema": {
+            "type": "priority"
+          },
+          "allowedValueCount": 2
+        },
+        {
+          "fieldId": "project",
+          "name": "Project",
+          "required": true,
+          "schema": {
+            "type": "project"
+          },
+          "allowedValueCount": 1
+        },
+        {
+          "fieldId": "reporter",
+          "name": "Reporter",
+          "required": true,
+          "schema": {
+            "type": "user"
+          }
+        },
+        {
+          "fieldId": "summary",
+          "name": "Summary",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "fieldId": "versions",
+          "name": "Affects versions",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": "version"
+          },
+          "allowedValueCount": 152
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+[package]
+name = "jira-client"
+version = "0.1.0"
+description = "Personal Jira desktop client"
+authors = ["you"]
+edition = "2021"
+
+[lib]
+name = "jira_client_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.6.3", features = [] }
+
+[dependencies]
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+futures-util = "0.3"
+keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rusqlite = { version = "=0.31.0", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "=2.11.5", features = [] }
+tauri-runtime = "=2.11.3"
+tauri-runtime-wry = "=2.11.4"
+tauri-macros = "=2.6.3"
+tauri-codegen = "=2.6.3"
+tauri-utils = "=2.9.3"
+thiserror = "2"
+tokio = { version = "1.53", features = ["sync", "time", "macros", "rt-multi-thread"] }
+url = "2"
+
+[dev-dependencies]
+serde_json = "1"
+tempfile = "3.26"
