@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Jira Client",
+  "version": "0.1.0",
+  "identifier": "com.personal.jiraclient",
+  "build": { "beforeDevCommand": "pnpm dev", "devUrl": "http://localhost:1420", "beforeBuildCommand": "pnpm build", "frontendDist": "../dist" },
+  "app": {
+    "windows": [{ "title": "Jira Client", "width": 1240, "height": 820, "minWidth": 960, "minHeight": 640 }],
+    "security": { "csp": "default-src 'self'; img-src 'self' asset: https://asset.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ipc: http://ipc.localhost" }
+  },
+  "bundle": { "active": true, "targets": "all", "icon": [] }
+}

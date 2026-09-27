@@ -1,0 +1,37 @@
+{
+  "decision": "approved",
+  "source": "user_chat",
+  "exact_message": "approved",
+  "date": "2026-09-26",
+  "scope": "Feasibility-first plan plus review annotations: TanStack Query, optional TanStack DB evaluation, and shadcn/ui/ReUI. Subsequent explicit selection authorizes a personal desktop-only API-token pilot and Slice 0 runnable auth/metadata inspector; full application remains dependent on pilot-site compatibility.",
+  "review_annotations_file": "review.json",
+  "auth_scope_decision": {
+    "source": "user_chat",
+    "selection": "Personal desktop-only pilot first",
+    "date": "2026-09-26",
+    "authentication": "Own Jira API token stored in native secure storage only",
+    "server": "none",
+    "team_onboarding": "deferred pending supported distributable authentication",
+    "authorized_implementation": "Slice 0 runnable authentication and metadata inspector",
+    "remaining_gate": "Pilot-site field and API compatibility before full issue application",
+    "credential_boundaries": [
+      "No token in chat",
+      "No token in repository",
+      "No plaintext fallback"
+    ]
+  },
+  "implementation_slice_decision": {
+    "decision": "approved",
+    "source": "user_chat",
+    "exact_message": "work on it, and close the app",
+    "prerequisite_user_confirmation": "it works now",
+    "scope": "Slice 1 offline read layer: SQLite cache for current sprint, backlog, and future sprints; board/list/details; comments; off-board reads. Read-only Jira access.",
+    "application_state": "App closed by parent and must remain closed during this work.",
+    "remaining_gate": "All-field edit and Jira write compatibility before later mutation features; not a prerequisite for this authorized read implementation.",
+    "scope_exclusions": [
+      "No Jira writes",
+      "No team onboarding",
+      "No shared server"
+    ]
+  }
+}
