@@ -52,7 +52,22 @@ export type IssueDetail = {
   attachments: { id: string; filename: string; mimeType: string; size: number }[];
 };
 
+export type SprintObservation = {
+  capturedAt: string;
+  estimateFieldId: string | null;
+  estimateLabel: string;
+  issues: { id: string; statusCategory: string; estimate: number | null; hierarchyLevel: number | null }[];
+};
+export type DailyData = {
+  sprintId: number;
+  estimateFieldId: string | null;
+  estimateLabel: string;
+  issues: { issue: IssueSummary; hierarchyLevel: number | null }[];
+  observations: SprintObservation[];
+};
+
 export const workspace = {
+  daily: (key: WorkspaceKey, sprintId: number): Promise<DailyData> => invoke("cache_daily", { ...key, sprintId }),
   list: (): Promise<WorkspaceRef[]> => isTauri() ? invoke("cache_workspaces") : Promise.resolve([]),
   read: (key: WorkspaceKey): Promise<CachedWorkspace | null> => invoke("cache_workspace", key),
   issues: (filter: IssueFilter): Promise<IssuePage> => invoke("cache_issues", { filter }),

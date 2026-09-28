@@ -1,0 +1,251 @@
+.daily-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 20px 24px;
+  min-width: 0;
+}
+.daily-page h2,
+.daily-page h3,
+.daily-page h4,
+.daily-page p {
+  margin: 0;
+}
+.daily-page h2 {
+  font-size: 22px;
+}
+.daily-page h3 {
+  font-size: 16px;
+}
+.daily-sprint-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+.daily-sprint-heading > div {
+  display: grid;
+  gap: 8px;
+}
+.daily-sprint-heading label {
+  display: grid;
+  gap: 6px;
+  min-width: 190px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.daily-page select,
+.daily-page button {
+  border: 1px solid var(--strong-line);
+  border-radius: 5px;
+  background: var(--surface);
+  padding: 6px 9px;
+}
+.daily-page select {
+  max-width: 100%;
+}
+.daily-meta {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.daily-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+.daily-metrics > div {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+.daily-metrics strong {
+  font-size: 28px;
+  font-variant-numeric: tabular-nums;
+}
+.daily-metrics span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.daily-note {
+  padding: 10px 12px;
+  background: var(--amber-bg);
+  color: var(--amber);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.daily-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 28px;
+}
+.daily-overview section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.daily-table-scroll {
+  overflow-x: auto;
+}
+.daily-workload {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.daily-workload th,
+.daily-workload td {
+  text-align: right;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.daily-workload th:first-child,
+.daily-workload td:first-child {
+  text-align: left;
+}
+.daily-workload thead {
+  color: var(--muted);
+}
+.daily-workload th {
+  font-weight: 500;
+}
+.daily-chart {
+  width: 100%;
+  min-height: 160px;
+  overflow: visible;
+}
+.daily-chart text {
+  fill: var(--muted);
+  font-size: 11px;
+}
+.daily-chart-grid {
+  stroke: var(--line);
+}
+.daily-chart-ideal {
+  stroke: var(--muted);
+  stroke-dasharray: 5 5;
+}
+.daily-chart-remaining {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  fill: none;
+}
+.daily-chart-dot {
+  fill: var(--accent);
+}
+.daily-forecast {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.daily-decisions {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
+}
+.daily-simulation {
+  background: var(--accent-soft);
+  color: var(--accent);
+  padding: 12px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.daily-person summary {
+  padding: 10px 0;
+  cursor: pointer;
+  font-weight: 600;
+}
+.daily-person ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.daily-person li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.daily-person li > input {
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+}
+.daily-page .daily-issue-title {
+  display: flex;
+  gap: 10px;
+  flex: 1;
+  min-width: 180px;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 4px;
+  align-items: flex-start;
+}
+.daily-issue-title span {
+  color: var(--muted);
+  white-space: nowrap;
+  font-size: 12px;
+}
+.daily-issue-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+.daily-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex-basis: 100%;
+  padding-left: 26px;
+}
+.daily-pending {
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+}
+.daily-page details > summary {
+  cursor: pointer;
+}
+.daily-page button:focus-visible,
+.daily-page summary:focus-visible,
+.daily-page input:focus-visible,
+.daily-page select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+@media (max-width: 1100px) {
+  .daily-overview {
+    grid-template-columns: 1fr;
+  }
+  .daily-sprint-heading {
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 600px) {
+  .daily-metrics {
+    gap: 10px;
+  }
+  .daily-metrics strong {
+    font-size: 22px;
+  }
+  .daily-person li > .daily-issue-meta {
+    margin-left: 26px;
+  }
+  .daily-sprint-heading label {
+    width: 100%;
+  }
+  .daily-issue-title {
+    flex-basis: 80% !important;
+  }
+}

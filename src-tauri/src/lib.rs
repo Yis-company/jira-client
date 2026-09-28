@@ -705,6 +705,7 @@ pub fn run() {
             workspace::cache_workspaces,
             workspace::cache_workspace,
             workspace::cache_issues,
+            workspace::cache_daily,
             workspace::cache_issue,
             workspace::sync_workspace,
             workspace::list_changes,

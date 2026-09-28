@@ -22,6 +22,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { BacklogSections, type BacklogSectionData } from "./BacklogSections";
 import { IssueDetailDialog } from "./IssueDetailDialog";
+import { DailyPage } from "./DailyPage";
 import {
   WorkspaceBoard,
   WorkspaceList,
@@ -36,7 +37,7 @@ const activeWorkspaceSyncs = new Map<
   string,
   Promise<Awaited<ReturnType<typeof workspace.sync>>>
 >();
-type Scope = "current" | "backlog" | "all";
+type Scope = "current" | "backlog" | "all" | "daily";
 type PendingSlot = () => void;
 let activeBacklogReads = 0;
 const waitingBacklogReads: (() => void)[] = [];
@@ -183,7 +184,7 @@ export function Workspace({
   const setOffset = (nextOffset: number) =>
     setPageState({ identity: pageIdentity, offset: nextOffset });
   const listFilter: IssueFilter | null =
-    key && scope !== "backlog"
+    key && scope !== "backlog" && scope !== "daily"
       ? { ...key, view: scope, search, offset, limit: PAGE_SIZE }
       : null;
   const page = useQuery({
@@ -230,6 +231,7 @@ export function Workspace({
         client.invalidateQueries({ queryKey: ["workspace-list", accountKey] }),
         client.invalidateQueries({ queryKey: ["cached-issues", accountKey] }),
         client.invalidateQueries({ queryKey: ["cached-issue", accountKey] }),
+        client.invalidateQueries({ queryKey: ["cached-daily", accountKey] }),
         client.invalidateQueries({ queryKey: ["changes", accountKey] }),
       ]);
       return true;
@@ -378,7 +380,9 @@ export function Workspace({
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (rootRef.current?.closest("[hidden]")) return;
-      const target = event.target as HTMLElement | null;
+      if (scope === "daily" || event.defaultPrevented) return;
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (target?.closest(".workspace-drag-handle")) return;
       const typing =
         target?.isContentEditable ||
         ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName ?? "");
@@ -682,6 +686,7 @@ export function Workspace({
       )}
 
       {current && (
+        scope === "daily" && key ? <DailyPage accountKey={accountKey} workspaceKey={key} current={current} pendingChanges={pendingChanges} onOpen={openIssue} /> :
         <>
           <div className="workspace-toolbar">
             <label className="workspace-search">
@@ -766,6 +771,8 @@ export function Workspace({
                   </p>
                 ) : mode === "list" ? (
                   <WorkspaceList
+                    accountKey={accountKey}
+                    workspaceKey={key!}
                     issues={currentIssues}
                     columns={columns}
                     selectedId={selectedIssueId}
@@ -774,6 +781,8 @@ export function Workspace({
                   />
                 ) : (
                   <WorkspaceBoard
+                    accountKey={accountKey}
+                    workspaceKey={key!}
                     issues={currentIssues}
                     columns={columns}
                     selectedId={selectedIssueId}
@@ -798,6 +807,7 @@ export function Workspace({
 
       {key && (
         <IssueDetailDialog
+          key={`${accountKey}:${key.projectKey}:${key.boardId}:${issueId ?? "closed"}`}
           open={!!issueId}
           issue={detail.data}
           loading={detail.isPending}
@@ -819,7 +829,7 @@ export function Workspace({
 }
 
 function scopeTitle(scope: Scope) {
-  return scope === "current"
+  return scope === "daily" ? "Daily" : scope === "current"
     ? "Current sprint"
     : scope === "backlog"
       ? "Backlog"

@@ -4,6 +4,7 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   Check,
+  CalendarDays,
   CircleHelp,
   Cloud,
   Database,
@@ -34,9 +35,9 @@ import { SyncChanges } from "./components/SyncChanges";
 import { ownerKey, useEditRuntime } from "./hooks/useEditRuntime";
 import { useThemePreference, type ThemePreference } from "./lib/theme";
 
-type View = "current" | "backlog" | "all" | "changes" | "settings";
+type View = "current" | "backlog" | "all" | "daily" | "changes" | "settings";
 type SettingsTab = "setup" | "fields" | "appearance";
-type WorkspaceScope = Extract<View, "current" | "backlog" | "all">;
+type WorkspaceScope = Extract<View, "current" | "backlog" | "all" | "daily">;
 
 export default function App() {
   const queryClient = useQueryClient();
@@ -231,8 +232,9 @@ export default function App() {
   const accountHost = siteHostname(session.data.siteUrl);
   const pendingCount = pendingChanges.data?.length ?? 0;
   const workspaceVisible =
-    view === "current" || view === "backlog" || view === "all";
+    view === "current" || view === "backlog" || view === "all" || view === "daily";
   const viewTitle = {
+    daily: "Daily",
     current: "Current sprint",
     backlog: "Backlog",
     all: "Downloaded issues",
@@ -270,6 +272,9 @@ export default function App() {
           aria-label="Workspace navigation"
         >
           <div className="nav-label">WORKSPACE</div>
+          <button type="button" className={`nav-item${view === "daily" ? " active" : ""}`} aria-current={view === "daily" ? "page" : undefined} onClick={() => navigateToScope("daily")}>
+            <CalendarDays size={16} />Daily
+          </button>
           <button
             type="button"
             className={`nav-item${view === "current" ? " active" : ""}`}

@@ -81,17 +81,31 @@ enum Decision {
     Uncertain,
 }
 
-fn decision(record: &StoredChange, remote: &FieldValue) -> Decision {
-    if record.change.requested.id == remote.id {
+fn decision(record: &StoredChange, remote: &RemoteFields) -> Decision {
+    if remote.matches_requested(&record.change.field, &record.change.requested) {
         return Decision::Matches;
     }
     if record.accepted {
         return Decision::Conflict;
     }
+    if record.change.field == "sprint" {
+        let Some(source) = record.source_sprint_id else {
+            return Decision::Conflict;
+        };
+        return match record.change.state.as_str() {
+            "unknown" | "sending" => Decision::Uncertain,
+            "confirming" => Decision::Conflict,
+            "queued" if remote.open_sprint_ids.as_slice() == [source] => Decision::Send,
+            _ => Decision::Conflict,
+        };
+    }
+    let Some(current) = remote.field_value(&record.change.field) else {
+        return Decision::Conflict;
+    };
     match record.change.state.as_str() {
         "unknown" | "sending" => Decision::Uncertain,
         "confirming" => Decision::Conflict,
-        "queued" if record.change.base.id == remote.id => Decision::Send,
+        "queued" if record.change.base.same_value(&current) => Decision::Send,
         _ => Decision::Conflict,
     }
 }
@@ -157,7 +171,7 @@ async fn process<A: WriteApi, G: DispatchGuard>(
     if !guard.active() {
         return Err(AppError::AccountChanged);
     }
-    let remote = match write_api::remote_issue(api, &record.change.issue_id).await {
+    let remote = match remote_for(api, &record).await {
         Ok(remote) if remote.project_key == record.change.project_key => remote,
         Ok(_) => return read_failure(store, &record, &AppError::Scope),
         Err(error) => return read_failure(store, &record, &error),
@@ -166,7 +180,7 @@ async fn process<A: WriteApi, G: DispatchGuard>(
         .field_value(&record.change.field)
         .ok_or(AppError::InvalidChange)?;
     store.remote(&remote)?;
-    match decision(&record, &value) {
+    match decision(&record, &remote) {
         Decision::Matches => {
             store.finish(&record, &remote, false)?;
             return Ok(Step::Continue);
@@ -213,12 +227,14 @@ async fn process<A: WriteApi, G: DispatchGuard>(
             if !guard.active() {
                 return Err(AppError::AccountChanged);
             }
-            match write_api::remote_issue(api, &confirming.change.issue_id).await {
+            match remote_for(api, &confirming).await {
                 Ok(remote) => {
                     let value = remote
                         .field_value(&confirming.change.field)
                         .ok_or(AppError::InvalidChange)?;
-                    if value.id == confirming.change.requested.id {
+                    if remote
+                        .matches_requested(&confirming.change.field, &confirming.change.requested)
+                    {
                         store.finish(&confirming, &remote, false)?;
                     } else {
                         store.remote(&remote)?;
@@ -358,7 +374,7 @@ pub(super) async fn resolve<A: WriteApi, G: DispatchGuard>(
             cache::discard_local(&mut cache::open(&store.path)?, &store.owner, &record)?;
         }
         "discard" if record.change.state == "unknown" => {
-            let remote = write_api::remote_issue(api, &record.change.issue_id).await?;
+            let remote = remote_for(api, &record).await?;
             store.finish(&record, &remote, true)?;
         }
         "keepMine" if record.change.state == "conflict" => rebase(api, store, &record).await?,
@@ -371,13 +387,8 @@ pub(super) async fn resolve<A: WriteApi, G: DispatchGuard>(
 }
 
 async fn rebase<A: WriteApi>(api: &A, store: &Store, record: &StoredChange) -> Result<()> {
-    let remote = write_api::remote_issue(api, &record.change.issue_id).await?;
-    if remote
-        .field_value(&record.change.field)
-        .ok_or(AppError::InvalidChange)?
-        .id
-        == record.change.requested.id
-    {
+    let remote = remote_for(api, record).await?;
+    if remote.matches_requested(&record.change.field, &record.change.requested) {
         store.finish(record, &remote, false)?;
     } else {
         write_api::validate(api, record, &remote).await?;
@@ -389,6 +400,15 @@ async fn rebase<A: WriteApi>(api: &A, store: &Store, record: &StoredChange) -> R
         )?;
     }
     Ok(())
+}
+
+async fn remote_for<A: WriteApi>(api: &A, record: &StoredChange) -> Result<RemoteFields> {
+    write_api::remote_issue_with_sprints(
+        api,
+        &record.change.issue_id,
+        record.change.field == "sprint",
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -420,6 +440,10 @@ mod tests {
             transitions_captured_at: Some("2026-09-27T00:00:00Z".into()),
             assignees_captured_at: Some("2026-09-27T00:00:00Z".into()),
             can_assign: true,
+            can_unassign: true,
+            can_edit_summary: true,
+            can_edit_description: true,
+            edit_capabilities_at: Some("2026-09-27T00:00:00Z".into()),
             assignee_query: "".into(),
             assignees_complete: false,
             transitions: ["2", "3"]
@@ -480,7 +504,24 @@ mod tests {
                         last_synced_at: "2026-09-27T00:00:00Z".into(),
                     },
                     columns: vec![],
-                    sprints: vec![],
+                    sprints: vec![
+                        Sprint {
+                            id: 11,
+                            name: "Current".into(),
+                            state: "active".into(),
+                            start_date: None,
+                            end_date: None,
+                            goal: None,
+                        },
+                        Sprint {
+                            id: 12,
+                            name: "Next".into(),
+                            state: "future".into(),
+                            start_date: None,
+                            end_date: None,
+                            goal: None,
+                        },
+                    ],
                     issue_count: 1,
                     comment_count: 0,
                 },
@@ -490,7 +531,12 @@ mod tests {
                     detail,
                     rank: 0,
                 }],
-                memberships: vec![],
+                memberships: vec![Membership {
+                    view: "current",
+                    sprint_id: 11,
+                    issue_id: "1".into(),
+                    rank: 0,
+                }],
             };
             let mut db = cache::open(&store.path).unwrap();
             cache::publish(&mut db, &store.owner, &snapshot).unwrap();
@@ -571,6 +617,7 @@ mod tests {
         replace_before: Option<Store>,
         assign_on_transition: bool,
         readback_status: Option<u16>,
+        allow_unassign: bool,
     }
     impl FakeApi {
         fn new(outcome: Outcome) -> Self {
@@ -581,6 +628,10 @@ mod tests {
                     project_key: "CK".into(),
                     status: status("1"),
                     assignee: Some(user("1")),
+                    summary: Some("Fixture issue".into()),
+                    description: Some(Value::Null),
+                    sprint_ids: vec![11, 9],
+                    open_sprint_ids: vec![11],
                     updated: "2026-09-27T00:00:00Z".into(),
                 }),
                 outcome,
@@ -591,6 +642,7 @@ mod tests {
                 replace_before: None,
                 assign_on_transition: false,
                 readback_status: None,
+                allow_unassign: true,
             }
         }
         fn count(&self) -> usize {
@@ -599,6 +651,25 @@ mod tests {
     }
     impl Api for FakeApi {
         async fn get(&self, path: &str, _query: &[(&str, String)]) -> Result<Value> {
+            if path.starts_with("/rest/agile/1.0/issue/") {
+                let remote = self.remote.lock().unwrap();
+                let open = remote.open_sprint_ids.first().copied();
+                let sprint = open.map(|id| json!({"id":id,"state":if id == 11 {"active"} else {"future"},"name":if id == 11 {"Current"} else {"Next"}})).unwrap_or(Value::Null);
+                let closed = remote
+                    .sprint_ids
+                    .iter()
+                    .filter(|id| !remote.open_sprint_ids.contains(id))
+                    .map(|id| json!({"id":id,"state":"closed"}))
+                    .collect::<Vec<_>>();
+                return Ok(
+                    json!({"id":remote.issue_id,"key":remote.key,"fields":{"sprint":sprint,"closedSprints":closed}}),
+                );
+            }
+            if path.contains("/board/") && path.ends_with("/sprint") {
+                return Ok(
+                    json!({"startAt":0,"maxResults":100,"total":2,"isLast":true,"values":[{"id":11,"name":"Current","state":"active"},{"id":12,"name":"Next","state":"future"}]}),
+                );
+            }
             if path.ends_with("/transitions") {
                 if let Some(active) = &self.revoke_before {
                     active.store(false, Ordering::SeqCst);
@@ -623,6 +694,11 @@ mod tests {
             if path.ends_with("/mypermissions") {
                 return Ok(json!({"permissions":{"ASSIGN_ISSUES":{"havePermission":true}}}));
             }
+            if path.ends_with("/editmeta") {
+                return Ok(
+                    json!({"fields":{"summary":{"required":true,"operations":["set"]},"description":{"required":false,"operations":["set"]},"assignee":{"required":!self.allow_unassign,"operations":["set"]}}}),
+                );
+            }
             if path.ends_with("/user/assignable/search") {
                 return Ok(json!([{"accountId":"2","displayName":"User 2","active":true}]));
             }
@@ -640,7 +716,7 @@ mod tests {
             }
             let remote = self.remote.lock().unwrap();
             Ok(
-                json!({"id":remote.issue_id,"key":remote.key,"fields":{"project":{"key":remote.project_key},"updated":remote.updated,
+                json!({"id":remote.issue_id,"key":remote.key,"fields":{"project":{"key":remote.project_key},"updated":remote.updated,"summary":remote.summary,"description":remote.description,
                 "status":{"id":remote.status.id,"name":remote.status.name,"statusCategory":{"key":remote.status.category}},
                 "assignee":remote.assignee.as_ref().map(|a|json!({"accountId":a.id,"displayName":a.display_name}))}}),
             )
@@ -659,8 +735,26 @@ mod tests {
                     if self.assign_on_transition {
                         remote.assignee = Some(user("3"));
                     }
-                } else {
-                    remote.assignee = Some(user(record.change.requested.id.as_deref().unwrap()));
+                } else if record.change.field == "assignee" {
+                    remote.assignee = record.change.requested.id.as_deref().map(user);
+                } else if record.change.field == "summary" {
+                    remote.summary = record
+                        .change
+                        .requested
+                        .value
+                        .as_ref()
+                        .and_then(Value::as_str)
+                        .map(str::to_owned);
+                } else if record.change.field == "description" {
+                    remote.description = record.change.requested.value.clone();
+                } else if record.change.field == "sprint" {
+                    if let (Some(source), Some(target)) =
+                        (record.source_sprint_id, record.target_sprint_id)
+                    {
+                        remote.sprint_ids.retain(|id| *id != source);
+                        remote.sprint_ids.push(target);
+                        remote.open_sprint_ids = vec![target];
+                    }
                 }
                 remote.updated = "2026-09-27T01:00:00Z".into();
             }
@@ -781,7 +875,8 @@ mod tests {
         assert_eq!(api.count(), 1);
         let mut record = f.store.load(id).unwrap().unwrap();
         record.change.state = "queued".into();
-        assert_eq!(decision(&record, &record.change.base), Decision::Conflict);
+        let remote = api.remote.lock().unwrap();
+        assert_eq!(decision(&record, &remote), Decision::Conflict);
     }
     #[tokio::test]
     async fn successful_response_with_different_readback_remains_a_visible_conflict() {
@@ -810,7 +905,7 @@ mod tests {
         let f = Fixture::new();
         f.status();
         f.enqueue(ChangeRequest::Assignee {
-            account_id: "2".into(),
+            account_id: Some("2".into()),
         });
         let api = FakeApi::new(Outcome::Success);
         api.remote.lock().unwrap().status = status("3");
@@ -826,7 +921,7 @@ mod tests {
         let f = Fixture::new();
         f.status();
         f.enqueue(ChangeRequest::Assignee {
-            account_id: "2".into(),
+            account_id: Some("2".into()),
         });
         let mut api = FakeApi::new(Outcome::Success);
         api.assign_on_transition = true;
@@ -837,12 +932,186 @@ mod tests {
         assert_eq!(pending[0].state, "conflict");
         assert_eq!(api.count(), 1);
     }
+
+    #[tokio::test]
+    async fn title_and_adf_description_are_independent_durable_changes() {
+        let f = Fixture::new();
+        f.enqueue(ChangeRequest::Summary {
+            summary: "Updated title".into(),
+        });
+        let description = json!({"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"Edited safely"}]}]});
+        f.enqueue(ChangeRequest::Description {
+            description: description.clone(),
+        });
+        let db = cache::open(&f.store.path).unwrap();
+        let filter = |search: &str| IssueFilter {
+            project_key: "CK".into(),
+            board_id: 7,
+            view: "all".into(),
+            sprint_id: None,
+            search: search.into(),
+            offset: 0,
+            limit: 100,
+        };
+        assert_eq!(
+            cache::issues(&db, &f.store.owner, &filter("Updated title"))
+                .unwrap()
+                .total,
+            1
+        );
+        assert_eq!(
+            cache::issues(&db, &f.store.owner, &filter("Fixture issue"))
+                .unwrap()
+                .total,
+            0
+        );
+        let api = FakeApi::new(Outcome::Success);
+        drain(&api, &f.guard, &f.store).await.unwrap();
+        assert_eq!(
+            api.count(),
+            2,
+            "pending after drain: {:?}",
+            f.store.list().unwrap()
+        );
+        assert!(f.store.list().unwrap().is_empty());
+        let detail = cache::issue(
+            &cache::open(&f.store.path).unwrap(),
+            &f.store.owner,
+            "CK",
+            7,
+            "1",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(detail.issue.summary, "Updated title");
+        assert_eq!(detail.fields["description"], description);
+        // A second edit must use the confirmed description, even before a board sync.
+        f.enqueue(ChangeRequest::Description {
+            description: Value::Null,
+        });
+        drain(&api, &f.guard, &f.store).await.unwrap();
+        assert_eq!(api.count(), 3);
+        assert!(f.store.list().unwrap().is_empty());
+        let detail = cache::issue(
+            &cache::open(&f.store.path).unwrap(),
+            &f.store.owner,
+            "CK",
+            7,
+            "1",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(detail.description, Value::Null);
+    }
+
+    #[test]
+    fn newer_status_and_assignee_intents_keep_an_earlier_title_projection() {
+        let f = Fixture::new();
+        f.enqueue(ChangeRequest::Summary {
+            summary: "Pending title".into(),
+        });
+        f.status();
+        f.enqueue(ChangeRequest::Assignee {
+            account_id: Some("2".into()),
+        });
+        let page = cache::issues(
+            &cache::open(&f.store.path).unwrap(),
+            &f.store.owner,
+            &IssueFilter {
+                project_key: "CK".into(),
+                board_id: 7,
+                view: "all".into(),
+                sprint_id: None,
+                search: "Pending title".into(),
+                offset: 0,
+                limit: 100,
+            },
+        )
+        .unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.issues[0].summary, "Pending title");
+        assert_eq!(page.issues[0].status.id, "2");
+        assert_eq!(page.issues[0].assignee.as_ref().unwrap().id, "2");
+    }
+
+    #[tokio::test]
+    async fn explicit_unassignment_requires_fresh_editmeta_permission() {
+        let f = Fixture::new();
+        f.enqueue(ChangeRequest::Assignee { account_id: None });
+        let mut api = FakeApi::new(Outcome::Success);
+        api.allow_unassign = false;
+        drain(&api, &f.guard, &f.store).await.unwrap();
+        assert_eq!(api.count(), 0);
+        assert_eq!(f.store.list().unwrap()[0].state, "blocked");
+
+        let api = FakeApi::new(Outcome::Success);
+        let f = Fixture::new();
+        f.enqueue(ChangeRequest::Assignee { account_id: None });
+        drain(&api, &f.guard, &f.store).await.unwrap();
+        assert_eq!(api.count(), 1);
+        assert!(f.store.list().unwrap().is_empty());
+        assert!(cache::issue(
+            &cache::open(&f.store.path).unwrap(),
+            &f.store.owner,
+            "CK",
+            7,
+            "1"
+        )
+        .unwrap()
+        .unwrap()
+        .issue
+        .assignee
+        .is_none());
+    }
+
+    #[tokio::test]
+    async fn moving_to_selected_future_sprint_preserves_history_and_updates_membership() {
+        let f = Fixture::new();
+        f.enqueue(ChangeRequest::Sprint {
+            source_sprint_id: 11,
+            target_sprint_id: 12,
+        });
+        let api = FakeApi::new(Outcome::Success);
+        drain(&api, &f.guard, &f.store).await.unwrap();
+        assert_eq!(api.count(), 1);
+        assert!(f.store.list().unwrap().is_empty());
+        let page = |view: &str, sprint_id: i64| {
+            cache::issues(
+                &cache::open(&f.store.path).unwrap(),
+                &f.store.owner,
+                &IssueFilter {
+                    project_key: "CK".into(),
+                    board_id: 7,
+                    view: view.into(),
+                    sprint_id: Some(sprint_id),
+                    search: String::new(),
+                    offset: 0,
+                    limit: 100,
+                },
+            )
+            .unwrap()
+        };
+        assert_eq!(page("current", 11).total, 0);
+        assert_eq!(page("future", 12).total, 1);
+        let detail = cache::issue(
+            &cache::open(&f.store.path).unwrap(),
+            &f.store.owner,
+            "CK",
+            7,
+            "1",
+        )
+        .unwrap()
+        .unwrap();
+        assert!(detail.issue.sprint_ids.contains(&12));
+        assert!(!detail.issue.sprint_ids.contains(&11));
+        assert!(detail.issue.sprint_ids.contains(&9));
+    }
     #[tokio::test]
     async fn unresolved_earlier_request_blocks_later_issue_write_but_not_its_local_intent() {
         let f = Fixture::new();
         f.status();
         f.enqueue(ChangeRequest::Assignee {
-            account_id: "2".into(),
+            account_id: Some("2".into()),
         });
         let api = FakeApi::new(Outcome::LostUnapplied);
         drain(&api, &f.guard, &f.store).await.unwrap();

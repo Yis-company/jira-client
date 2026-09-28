@@ -34,6 +34,7 @@ export function SyncChanges({
       await Promise.all([
         client.invalidateQueries({ queryKey: ["cached-issues", accountKey] }),
         client.invalidateQueries({ queryKey: ["cached-issue", accountKey] }),
+        client.invalidateQueries({ queryKey: ["cached-daily", accountKey] }),
       ]);
       if (action !== "discard") {
         await requestEditSync(accountKey);
@@ -157,13 +158,13 @@ function ChangeCard({
         </div>
         <p className="change-context">
           {change.projectKey} · board {change.boardId} ·{" "}
-          {change.field === "status" ? "Status" : "Assignee"}
+          {{ status: "Status", assignee: "Assignee", summary: "Title", description: "Description", sprint: "Sprint" }[change.field]}
         </p>
         <div className="change-values">
-          <Value label="Before" value={change.base.label} />
-          <Value label="Requested" value={change.requested.label} />
+          <Value label="Before" value={change.field === "description" ? descriptionText(change.base.value) : change.base.label} />
+          <Value label="Requested" value={change.field === "description" ? descriptionText(change.requested.value) : change.requested.label} />
           {change.remote && (
-            <Value label="Jira now" value={change.remote.label} />
+            <Value label="Jira now" value={change.field === "description" ? descriptionText(change.remote.value) : change.remote.label} />
           )}
         </div>
         {change.state === "conflict" && (
@@ -227,6 +228,20 @@ function Value({ label, value }: { label: string; value: string }) {
       <span>{value || "—"}</span>
     </div>
   );
+}
+
+function descriptionText(value: unknown): string {
+  if (value == null) return "Empty description";
+  if (typeof value === "string") return value || "Empty description";
+  function text(node: unknown): string {
+    if (!node || typeof node !== "object") return "";
+    const data = node as { type?: string; text?: string; content?: unknown[]; attrs?: { text?: string } };
+    if (typeof data.text === "string") return data.text;
+    if (data.type === "mention") return data.attrs?.text ?? "[Mention]";
+    if (data.type === "media" || data.type === "mediaSingle") return "[Attachment]";
+    return Array.isArray(data.content) ? data.content.map(text).join(data.type === "paragraph" ? "" : "\n") : "";
+  }
+  return text(value).trim() || "Rich content or empty text";
 }
 
 type RecoveryAction = {

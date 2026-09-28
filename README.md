@@ -1,6 +1,6 @@
 # Jira Client
 
-A Tauri 2 desktop pilot for one person and one Jira Cloud site, with a local SQLite workspace and durable offline status and assignee edits.
+A Tauri 2 desktop pilot for one person and one Jira Cloud site, with a local SQLite workspace and durable offline issue edits.
 
 ## Run it
 
@@ -16,13 +16,17 @@ Choose a project and Scrum board; the initial sync starts automatically. The wor
 
 Saved work opens immediately, with an automatic refresh when online. A refresh replaces the saved snapshot only after the complete download succeeds; a failed refresh keeps the previous snapshot. Online refresh uses polling, not push notifications. SQLite stores issue content locally, partitioned by account, site, project, and board. Disconnect removes credentials and the saved connection; downloaded data remains on the device and is accessible again only through the same account identity.
 
-Status and assignee changes save locally and upload when connected. Online issue inspection caches available transitions and assignable users; offline editors use these previously discovered options. Transitions needing additional form fields and unassignment are not supported yet. Sync changes shows pending edits, rejected requests, conflicts, and uncertain outcomes. A request whose outcome is unknown is never automatically resent.
+Status, assignee, title, description, and next-sprint moves save locally and upload when connected. Online issue inspection caches available transitions, assignable users, and editable fields; offline editors use these previously discovered capabilities. Unassignment is available when Jira permits it. Transitions needing additional form fields remain unavailable. Descriptions use Tiptap with an explicit Jira ADF adapter; unsupported content stays read-only rather than losing formatting or embedded content. Sync changes shows pending edits, rejected requests, conflicts, and uncertain outcomes. A request whose outcome is unknown is never automatically resent.
 
-Project setup and Create fields retain the metadata inspector. General create-field compatibility is explicitly unverified. Issue creation, comments, other field editors, sprint operations, release assignment, and team distribution are later slices.
+Daily shows one active sprint's goal, weekdays left, assigned workload, and observed burndown. It reads the entire saved sprint, independently of list filters and pagination. Standard issues are counted once; subtasks and epic rollups are excluded, and missing estimates/type metadata are disclosed. History begins with successful syncs after this feature is installed, with no reconstructed past data. The finish projection requires at least three comparable working-day intervals of confirmed net completion; removing scope does not count as completing work. Days use the displayed local timezone and Monday–Friday, without holiday or leave assumptions. Select work to simulate moving it, then confirm each move to a named future sprint.
+
+Project setup and Create fields retain the metadata inspector. General create-field compatibility is explicitly unverified. Issue creation, comment editing, other field editors, sprint creation/lifecycle, release assignment, and team distribution are later slices.
 
 ## Desktop workspace
 
 Open issues in a focused detail window; Escape returns to the selected row. `/` or Cmd/Ctrl+F focuses local issue search, Cmd/Ctrl+B switches list/board outside Backlog, and J/K moves between visible issues when you are not typing.
+
+Use drag handles to move an issue between status groups in either list or Kanban view. Keyboard dragging and the Move status menu use the same Jira transition checks. Empty status groups remain available as destinations. These moves change status, not issue rank. Click the current assignee for a single searchable picker; Escape closes the picker before the issue dialog. Title and description drafts have explicit Save/Cancel and warn before discarding unsaved changes.
 
 Settings contains project setup, field metadata, account connection, and Light/Dark/System appearance. Sync changes remains available from the sidebar, including issues that leave the current board results.
 

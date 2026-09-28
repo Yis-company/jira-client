@@ -290,7 +290,7 @@ describe("combined backlog planning", () => {
 
   it("keeps the selected list or board presentation when switching to and from backlog", async () => {
     const view = renderWorkspace("current");
-    await screen.findByRole("button", { name: /CK-backlog/ });
+    await waitFor(() => expect(document.querySelector(".workspace-row-open")).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole("button", { name: "Board" }));
     expect(screen.getByRole("button", { name: "Board" })).toHaveAttribute(

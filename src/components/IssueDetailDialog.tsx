@@ -1,8 +1,19 @@
-import { Fragment, useEffect, useRef } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { AlertCircle } from "lucide-react";
+import { edits } from "../lib/edits";
+import {
+  adfToEditorDocument,
+  editorDocumentToAdf,
+  type JsonRecord,
+} from "../lib/adfEditor";
 import type { IssueDetail, Sprint, WorkspaceKey } from "../lib/workspace";
 import type { PendingChange } from "../lib/edits";
 import { IssueEditors } from "./IssueEditors";
+import { RichDescriptionEditor } from "./RichDescriptionEditor";
+import { useIssueEditMutation } from "./useIssueEditMutation";
+import { Button } from "./ui/button";
+import "./issue-editing.css";
 
 export function IssueDetailDialog({
   open,
@@ -29,6 +40,40 @@ export function IssueDetailDialog({
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
+  const [summaryEditing, setSummaryEditing] = useState(false);
+  const [summaryDraft, setSummaryDraft] = useState("");
+  const [summaryBaseDraft, setSummaryBaseDraft] = useState("");
+  const [summarySavedValue, setSummarySavedValue] = useState<string | null>(null);
+  const [descriptionEditing, setDescriptionEditing] = useState(false);
+  const [descriptionDraft, setDescriptionDraft] = useState<JsonRecord | null>(null);
+  const [descriptionBaseDraft, setDescriptionBaseDraft] = useState<JsonRecord | null>(null);
+  const [descriptionAdapterError, setDescriptionAdapterError] = useState("");
+  const [descriptionSavedValue, setDescriptionSavedValue] = useState<unknown>(null);
+  const [descriptionHasSavedValue, setDescriptionHasSavedValue] = useState(false);
+  const [closeGuardOpen, setCloseGuardOpen] = useState(false);
+  const titleInput = useRef<HTMLTextAreaElement>(null);
+  const capabilitiesKey = useMemo(
+    () => [
+      "issue-capabilities",
+      accountKey,
+      workspaceKey.projectKey,
+      workspaceKey.boardId,
+      issue?.issue.id ?? "",
+      "",
+    ],
+    [accountKey, issue?.issue.id, workspaceKey.boardId, workspaceKey.projectKey],
+  );
+  const capabilities = useQuery({
+    queryKey: capabilitiesKey,
+    queryFn: () => edits.capabilities(workspaceKey, issue!.issue.id, false, ""),
+    enabled: !!issue,
+    retry: false,
+  });
+  const mutation = useIssueEditMutation({
+    accountKey,
+    workspaceKey,
+    issueId: issue?.issue.id ?? "",
+  });
 
   useEffect(() => {
     const node = dialog.current;
@@ -41,8 +86,109 @@ export function IssueDetailDialog({
     }
   }, [open]);
 
+  useEffect(() => {
+    if (!summaryEditing && issue) {
+      const current = summarySavedValue ?? issue.issue.summary;
+      setSummaryDraft(current);
+      setSummaryBaseDraft(current);
+    }
+  }, [issue?.issue.id, issue?.issue.summary, summaryEditing, summarySavedValue]);
+
+  useEffect(() => {
+    if (summarySavedValue !== null && issue?.issue.summary === summarySavedValue) {
+      setSummarySavedValue(null);
+    }
+  }, [issue?.issue.summary, summarySavedValue]);
+
+  useEffect(() => {
+    if (
+      descriptionSavedValue !== null &&
+      issue &&
+      sameJson(issue.description, descriptionSavedValue)
+    ) {
+      setDescriptionSavedValue(null);
+      setDescriptionHasSavedValue(false);
+    }
+  }, [descriptionSavedValue, issue?.description]);
+
+  useEffect(() => {
+    if (summaryEditing) titleInput.current?.focus();
+  }, [summaryEditing]);
+
+  const descriptionValue = descriptionHasSavedValue ? descriptionSavedValue : issue?.description;
+  const descriptionConversion = useMemo(
+    () => adfToEditorDocument(descriptionValue),
+    [descriptionValue],
+  );
+  const dirtyDraft =
+    (summaryEditing && summaryDraft !== summaryBaseDraft) ||
+    (descriptionEditing &&
+      !!issue &&
+      descriptionDraft !== null &&
+      !sameJson(descriptionDraft, descriptionBaseDraft));
+
+  function attemptClose() {
+    if (dirtyDraft) {
+      setCloseGuardOpen(true);
+      return;
+    }
+    dialog.current?.close();
+  }
+
+  function discardDraftsAndClose() {
+    setSummaryEditing(false);
+    setDescriptionEditing(false);
+    setSummaryDraft(issue ? summarySavedValue ?? issue.issue.summary : "");
+    setSummaryBaseDraft(issue ? summarySavedValue ?? issue.issue.summary : "");
+    setDescriptionDraft(null);
+    setDescriptionBaseDraft(null);
+    setCloseGuardOpen(false);
+    dialog.current?.close();
+  }
+
   function handleClose() {
     if (open) onClose();
+  }
+
+  async function saveSummary() {
+    if (
+      !issue ||
+      !summaryDraft.trim() ||
+      summaryLocked ||
+      !capabilities.data?.canEditSummary
+    ) {
+      return;
+    }
+    const saved = await mutation.save({ field: "summary", summary: summaryDraft });
+    if (saved !== undefined) {
+      setSummarySavedValue(summaryDraft);
+      setSummaryEditing(false);
+    }
+  }
+
+  async function saveDescription() {
+    if (
+      !issue ||
+      !descriptionDraft ||
+      descriptionLocked ||
+      !capabilities.data?.canEditDescription
+    ) {
+      return;
+    }
+    let value: JsonRecord;
+    try {
+      value = editorDocumentToAdf(descriptionDraft);
+    } catch (cause) {
+      setDescriptionAdapterError(errorMessage(cause));
+      return;
+    }
+    setDescriptionAdapterError("");
+    const saved = await mutation.save({ field: "description", description: value });
+    if (saved !== undefined) {
+      setDescriptionSavedValue(value);
+      setDescriptionHasSavedValue(true);
+      setDescriptionEditing(false);
+    }
   }
 
   const statusChange = pendingChanges.find(
@@ -51,7 +197,19 @@ export function IssueDetailDialog({
   const assigneeChange = pendingChanges.find(
     (change) => change.field === "assignee",
   );
+  const summaryChange = pendingChanges.find((change) => change.field === "summary");
+  const descriptionChange = pendingChanges.find((change) => change.field === "description");
+  const summaryLocked =
+    !!summaryChange &&
+    (summaryChange.state !== "queued" || summaryChange.attempted);
+  const descriptionLocked =
+    !!descriptionChange &&
+    (descriptionChange.state !== "queued" || descriptionChange.attempted);
   const showChanges = () => {
+    if (dirtyDraft) {
+      setCloseGuardOpen(true);
+      return;
+    }
     dialog.current?.close();
     onShowChanges?.();
   };
@@ -68,6 +226,13 @@ export function IssueDetailDialog({
       aria-labelledby={issue ? "workspace-issue-title" : undefined}
       aria-label={issue ? undefined : "Issue details"}
       onClose={handleClose}
+      onCancel={(event) => {
+        event.preventDefault();
+        attemptClose();
+      }}
+      onClick={(event) => {
+        if (event.target === dialog.current) attemptClose();
+      }}
     >
       <header className="workspace-dialog-header">
         <div>
@@ -85,7 +250,7 @@ export function IssueDetailDialog({
           type="button"
           className="workspace-dialog-close"
           aria-label="Close issue details"
-          onClick={() => dialog.current?.close()}
+          onClick={attemptClose}
         >
           <span aria-hidden="true">×</span>
           <span>Close</span>
@@ -107,7 +272,90 @@ export function IssueDetailDialog({
         <div className="workspace-dialog-layout">
           <div className="workspace-detail-main">
             <header className="workspace-detail-title">
-              <h2 id="workspace-issue-title">{issue.issue.summary}</h2>
+              {summaryEditing ? (
+                <div className="issue-title-editor">
+                  <h2 id="workspace-issue-title" className="sr-only">
+                    {summaryDraft || issue.issue.key}
+                  </h2>
+                  <label htmlFor="workspace-summary-draft">Title</label>
+                  <textarea
+                    id="workspace-summary-draft"
+                    ref={titleInput}
+                    value={summaryDraft}
+                    maxLength={255}
+                    onChange={(event) => setSummaryDraft(event.target.value)}
+                  />
+                  <div className="issue-edit-actions">
+                    <Button
+                      onClick={() => void saveSummary()}
+                      disabled={
+                        !summaryDraft.trim() ||
+                        summaryLocked ||
+                        !capabilities.data?.canEditSummary ||
+                        mutation.saving === "summary"
+                      }
+                    >
+                      {mutation.saving === "summary" ? "Saving…" : "Save title"}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        const current = summarySavedValue ?? issue.issue.summary;
+                        setSummaryDraft(current);
+                        setSummaryBaseDraft(current);
+                        setSummaryEditing(false);
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    {mutation.saveError && (
+                      <p className="issue-edit-error" role="alert">
+                        {mutation.saveError}
+                      </p>
+                    )}
+                    {summaryLocked && (
+                      <p className="editor-locked" role="status">
+                        Title edit is {summaryChange?.state}.{" "}
+                        {onShowChanges && (
+                          <button type="button" onClick={showChanges}>
+                            Review pending change
+                          </button>
+                        )}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <h2 id="workspace-issue-title">
+                    {summarySavedValue ?? issue.issue.summary}
+                  </h2>
+                  {capabilities.data?.canEditSummary &&
+                    (summaryLocked ? (
+                      <p className="editor-locked" role="status">
+                        Title edit is {summaryChange?.state}.{" "}
+                        {onShowChanges && (
+                          <button type="button" onClick={showChanges}>
+                            Review pending change
+                          </button>
+                        )}
+                      </p>
+                    ) : (
+                      <button
+                        type="button"
+                        className="workspace-changes-link"
+                        onClick={() => {
+                          const current = summarySavedValue ?? issue.issue.summary;
+                          setSummaryDraft(current);
+                          setSummaryBaseDraft(current);
+                          setSummaryEditing(true);
+                        }}
+                      >
+                        Edit title
+                      </button>
+                    ))}
+                </>
+              )}
             </header>
             {Boolean(error) && (
               <div className="workspace-inline-error" role="status">
@@ -118,9 +366,117 @@ export function IssueDetailDialog({
                 </span>
               </div>
             )}
+            {mutation.notice && (
+              <p className="issue-edit-confirmation" role="status">
+                {mutation.notice}
+              </p>
+            )}
+            {mutation.syncError && (
+              <p className="issue-edit-error" role="status">
+                Saved on this device; sync could not start: {mutation.syncError}
+              </p>
+            )}
             <section className="workspace-detail-section">
-              <h3>Description</h3>
-              <Adf value={issue.description} />
+              <header className="issue-description-heading">
+                <h3>Description</h3>
+                {!descriptionEditing && capabilities.data?.canEditDescription && (
+                  descriptionLocked ? (
+                    <span className="editor-locked" role="status">
+                      Description edit is {descriptionChange?.state}.
+                      {onShowChanges && (
+                        <button type="button" onClick={showChanges}>
+                          Review
+                        </button>
+                      )}
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="workspace-changes-link"
+                      onClick={() => {
+                        if (descriptionConversion.safe) {
+                          setDescriptionDraft(descriptionConversion.document);
+                          setDescriptionBaseDraft(descriptionConversion.document);
+                          setDescriptionAdapterError("");
+                          setDescriptionEditing(true);
+                        }
+                      }}
+                      disabled={!descriptionConversion.safe}
+                    >
+                      Edit description
+                    </button>
+                  )
+                )}
+              </header>
+              {descriptionEditing && descriptionDraft ? (
+                <>
+                  <RichDescriptionEditor
+                    initialDocument={descriptionDraft}
+                    onChange={setDescriptionDraft}
+                  />
+                  <div className="issue-edit-actions">
+                    <Button
+                      onClick={() => void saveDescription()}
+                      disabled={
+                        descriptionLocked ||
+                        !capabilities.data?.canEditDescription ||
+                        mutation.saving === "description"
+                      }
+                    >
+                      {mutation.saving === "description" ? "Saving…" : "Save description"}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        setDescriptionDraft(null);
+                        setDescriptionBaseDraft(null);
+                        setDescriptionEditing(false);
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    {mutation.saveError && (
+                      <p className="issue-edit-error" role="alert">
+                        {mutation.saveError}
+                      </p>
+                    )}
+                    {descriptionAdapterError && (
+                      <p className="issue-edit-error" role="alert">
+                        {descriptionAdapterError}
+                      </p>
+                    )}
+                    {descriptionLocked && (
+                      <p className="editor-locked" role="status">
+                        Description edit is {descriptionChange?.state}.{" "}
+                        {onShowChanges && (
+                          <button type="button" onClick={showChanges}>
+                            Review pending change
+                          </button>
+                        )}
+                      </p>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <Adf value={descriptionValue} />
+              )}
+              {!descriptionConversion.safe && capabilities.data?.canEditDescription && (
+                <p className="editor-hint">
+                  {descriptionConversion.reason} The description remains readable and untouched.
+                  {issueBrowseUrl(accountKey, issue.issue.key) && (
+                    <>
+                      {" "}
+                      <a
+                        href={issueBrowseUrl(accountKey, issue.issue.key)!}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open in Jira
+                      </a>
+                    </>
+                  )}
+                </p>
+              )}
             </section>
             <section className="workspace-detail-section">
               <h3>
@@ -219,6 +575,29 @@ export function IssueDetailDialog({
           </aside>
         </div>
       )}
+      {closeGuardOpen && (
+        <div
+          className="issue-edit-guard"
+          role="alertdialog"
+          aria-labelledby="issue-edit-guard-title"
+          aria-describedby="issue-edit-guard-copy"
+        >
+          <div>
+            <strong id="issue-edit-guard-title">Keep your unsaved edits?</strong>
+            <p id="issue-edit-guard-copy">
+              Your title or description draft has not been saved.
+            </p>
+          </div>
+          <div className="issue-edit-actions">
+            <Button variant="secondary" onClick={() => setCloseGuardOpen(false)}>
+              Keep editing
+            </Button>
+            <Button variant="secondary" onClick={discardDraftsAndClose}>
+              Discard and close
+            </Button>
+          </div>
+        </div>
+      )}
     </dialog>
   );
 }
@@ -310,6 +689,8 @@ function adfToNodes(value: unknown): React.ReactNode {
       return <blockquote>{children}</blockquote>;
     case "codeBlock":
       return <pre>{children}</pre>;
+    case "rule":
+      return <hr />;
     case "mention":
       return (
         <span>
@@ -330,6 +711,21 @@ function safeUrl(value: unknown) {
   try {
     const url = new URL(value);
     return ["https:", "http:"].includes(url.protocol) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function issueBrowseUrl(accountKey: string, issueKey: string) {
+  const separator = accountKey.lastIndexOf(":");
+  if (separator <= 0) return null;
+  try {
+    const site = new URL(accountKey.slice(0, separator));
+    if (site.protocol !== "https:" && site.protocol !== "http:") return null;
+    site.pathname = `${site.pathname.replace(/\/$/, "")}/browse/${encodeURIComponent(issueKey)}`;
+    site.search = "";
+    site.hash = "";
+    return site.href;
   } catch {
     return null;
   }
@@ -357,6 +753,14 @@ function formatSize(size: number) {
   return size < 1024 * 1024
     ? `${Math.round(size / 1024)} KB`
     : `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function sameJson(left: unknown, right: unknown) {
+  try {
+    return JSON.stringify(left) === JSON.stringify(right);
+  } catch {
+    return false;
+  }
 }
 
 function errorMessage(error: unknown) {
