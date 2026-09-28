@@ -1,4 +1,5 @@
 mod cache;
+mod daily;
 mod jira;
 mod model;
 mod outbox;
@@ -372,6 +373,16 @@ pub(super) async fn cache_workspace(
     })
     .await
     .map_err(|_| AppError::Cache)?
+}
+
+#[tauri::command]
+pub(super) async fn cache_daily(app: AppHandle, project_key: String, board_id: i64, sprint_id: i64) -> Result<daily::DailyData> {
+    validate_key(&project_key, board_id)?;
+    if sprint_id <= 0 { return Err(AppError::InvalidFilter); }
+    let owner = saved_owner(&app)?;
+    let path = db_path(&app)?;
+    tokio::task::spawn_blocking(move || daily::read(&cache::open(&path)?, &owner, &project_key, board_id, sprint_id))
+        .await.map_err(|_| AppError::Cache)?
 }
 
 #[tauri::command]

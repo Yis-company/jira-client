@@ -10,7 +10,7 @@ import {
   workspace,
 } from "../src/lib/workspace";
 import { bridge } from "../src/lib/bridge";
-import { edits, type PendingChange } from "../src/lib/edits";
+import { edits, type FieldValue, type PendingChange } from "../src/lib/edits";
 import "../src/styles.css";
 import "./preview.css";
 
@@ -32,6 +32,8 @@ const cache: CachedWorkspace = {
       name: "Sprint 81",
       state: "active",
       goal: "Ship the offline workspace",
+      startDate: "2026-09-21",
+      endDate: "2026-10-02",
     },
     {
       id: 82,
@@ -79,7 +81,7 @@ const items: IssueSummary[] = Array.from({ length: 14 }, (_, index) => ({
     { id: "10001", name: "Done", category: "done" },
   ][index % 4],
   assignee: {
-    id: `user-${index % people.length}`,
+    id: `preview-${index % people.length}`,
     displayName: people[index % people.length],
   },
   issueType: index === 5 ? "Bug" : "Task",
@@ -100,6 +102,7 @@ const items: IssueSummary[] = Array.from({ length: 14 }, (_, index) => ({
 }));
 const textDoc = (text: string) => ({
   type: "doc",
+  version: 1,
   content: [{ type: "paragraph", content: [{ type: "text", text }] }],
 });
 const details = new Map<string, IssueDetail>(
@@ -111,6 +114,7 @@ const details = new Map<string, IssueDetail>(
         "This is synthetic preview content. No Jira request was made.",
       ),
       fields: {
+        issuetype: { id: "task", hierarchyLevel: 0 },
         customfield_10001: "Review required",
         customfield_10002: { example: true, mode: "cached" },
       },
@@ -148,7 +152,7 @@ workspace.list = async () => [
     lastSyncedAt: cache.lastSyncedAt,
   },
 ];
-workspace.read = async () => cache;
+workspace.read = async () => structuredClone(cache);
 workspace.issues = async (filter: IssueFilter) => {
   let result = items;
   if (filter.view === "current") {
@@ -169,12 +173,37 @@ workspace.issues = async (filter: IssueFilter) => {
         .includes(filter.search.toLowerCase()),
     );
   }
-  return {
+  return structuredClone({
     issues: result.slice(filter.offset, filter.offset + filter.limit),
     total: result.length,
-  };
+  });
 };
-workspace.issue = async (_key, issueId) => details.get(issueId) ?? null;
+workspace.issue = async (_key, issueId) => {
+  const detail = details.get(issueId);
+  return detail ? structuredClone(detail) : null;
+};
+workspace.daily = async (_key, sprintId) =>
+  structuredClone({
+    sprintId,
+    estimateFieldId: "preview-points",
+    estimateLabel: "Story Points",
+    issues: items
+      .filter((item) => item.sprintIds.includes(sprintId))
+      .map((issue) => ({ issue, hierarchyLevel: 0 })),
+    observations: [21, 22, 23, 24].map((day, index) => ({
+      capturedAt: `2026-09-${day}T09:00:00Z`,
+      estimateFieldId: "preview-points",
+      estimateLabel: "Story Points",
+      issues: items
+        .filter((item) => ["1", "2", "3", "4", "5", "8", "9"].includes(item.id))
+        .map((issue, position) => ({
+          id: issue.id,
+          statusCategory: position < index ? "done" : "new",
+          estimate: issue.storyPoints,
+          hierarchyLevel: 0,
+        })),
+    })),
+  });
 workspace.sync = async () => ({
   ...cache,
   lastSyncedAt: new Date().toISOString(),
@@ -212,29 +241,84 @@ edits.capabilities = async (_key, issueId, _refresh, query) => {
           person.displayName.toLowerCase().includes(query.toLowerCase()),
       ),
     canAssign: true,
+    canEditSummary: true,
+    canEditDescription: true,
+    canUnassign: true,
     assigneeQuery: query,
     assigneesComplete: false,
   };
 };
 edits.enqueue = async (key, issueId, change) => {
   const item = items.find((issue) => issue.id === issueId)!;
-  const base =
-    change.field === "status"
-      ? { id: item.status.id, label: item.status.name }
-      : {
-          id: item.assignee?.id ?? null,
-          label: item.assignee?.displayName ?? "Unassigned",
-        };
-  const requested =
-    change.field === "status"
-      ? { id: "3", label: "In Progress" }
-      : {
-          id: change.accountId,
-          label:
-            people.find(
-              (name, index) => `preview-${index}` === change.accountId,
-            ) ?? "Preview teammate",
-        };
+  const detail = details.get(issueId)!;
+  let base: FieldValue;
+  let requested: FieldValue;
+  switch (change.field) {
+    case "status": {
+      base = { id: item.status.id, label: item.status.name };
+      const capabilities = await edits.capabilities(key, issueId);
+      const transition = capabilities.transitions.find(
+        (value) => value.id === change.transitionId,
+      )!;
+      item.status = transition.target;
+      requested = { id: item.status.id, label: item.status.name };
+      break;
+    }
+    case "assignee":
+      base = {
+        id: item.assignee?.id ?? null,
+        label: item.assignee?.displayName ?? "Unassigned",
+      };
+      item.assignee = change.accountId
+        ? {
+            id: change.accountId,
+            displayName:
+              people.find(
+                (_name, index) => `preview-${index}` === change.accountId,
+              ) ?? "Teammate",
+          }
+        : null;
+      requested = {
+        id: item.assignee?.id ?? null,
+        label: item.assignee?.displayName ?? "Unassigned",
+      };
+      break;
+    case "summary":
+      base = { id: null, label: item.summary, value: item.summary };
+      item.summary = change.summary;
+      requested = { id: null, label: change.summary, value: change.summary };
+      break;
+    case "description":
+      base = {
+        id: null,
+        label: "Previous description",
+        value: detail.description,
+      };
+      detail.description = change.description;
+      requested = {
+        id: null,
+        label: "Updated description",
+        value: change.description,
+      };
+      break;
+    case "sprint":
+      base = {
+        id: String(change.sourceSprintId),
+        label: "Sprint 81",
+        value: item.sprintIds,
+      };
+      item.sprintIds = item.sprintIds
+        .filter((id) => id !== change.sourceSprintId)
+        .concat(change.targetSprintId);
+      requested = {
+        id: String(change.targetSprintId),
+        label:
+          cache.sprints.find((sprint) => sprint.id === change.targetSprintId)
+            ?.name ?? "Next sprint",
+        value: item.sprintIds,
+      };
+      break;
+  }
   const pending: PendingChange = {
     ...key,
     id: changeSequence++,
@@ -251,7 +335,12 @@ edits.enqueue = async (key, issueId, change) => {
     createdAt: new Date().toISOString(),
     canRetry: false,
   };
-  pendingChanges = [pending, ...pendingChanges];
+  pendingChanges = [
+    pending,
+    ...pendingChanges.filter(
+      (value) => value.issueId !== issueId || value.field !== change.field,
+    ),
+  ];
   return pending;
 };
 edits.resolve = async (id, action) => {

@@ -1,17 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Search } from "lucide-react";
-import {
-  type ChangeRequest,
-  edits,
-  type IssueCapabilities,
-  type PendingChange,
-} from "../lib/edits";
+import { edits, type IssueCapabilities, type PendingChange } from "../lib/edits";
 import type { IssueDetail, WorkspaceKey } from "../lib/workspace";
-import { requestEditSync } from "../lib/editSync";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Alert, AlertDescription, AlertTitle } from "./reui/alert";
+import { useIssueEditMutation } from "./useIssueEditMutation";
 
 const capabilityRefreshes = new Map<string, Promise<IssueCapabilities>>();
 
@@ -53,11 +48,25 @@ export function IssueEditors({
   const client = useQueryClient();
   const [onlineHint, setOnlineHint] = useState(navigator.onLine);
   const [assigneeSearch, setAssigneeSearch] = useState("");
+  const [assigneeOpen, setAssigneeOpen] = useState(false);
+  const [activeAssigneeIndex, setActiveAssigneeIndex] = useState(0);
+  const assigneeSearchRef = useRef<HTMLInputElement>(null);
+  const assigneeTriggerRef = useRef<HTMLButtonElement>(null);
   const [capabilityError, setCapabilityError] = useState("");
-  const [syncError, setSyncError] = useState("");
-  const [saveError, setSaveError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [saving, setSaving] = useState<"status" | "assignee" | null>(null);
+  const {
+    save,
+    cancel,
+    saving,
+    saveError,
+    syncError,
+    notice,
+    clearNotice,
+    clearSyncError,
+  } = useIssueEditMutation({
+    accountKey,
+    workspaceKey,
+    issueId: issue.issue.id,
+  });
   const capabilitiesKey = useMemo(
     () => [
       "issue-capabilities",
@@ -109,6 +118,15 @@ export function IssueEditors({
     stateUnavailable ||
     (assigneeChange &&
       (assigneeChange.state !== "queued" || assigneeChange.attempted));
+  useEffect(() => {
+    setAssigneeOpen(false);
+    setAssigneeSearch("");
+    setActiveAssigneeIndex(0);
+  }, [accountKey, issue.issue.id, workspaceKey.boardId, workspaceKey.projectKey]);
+
+  useEffect(() => {
+    if (assigneeOpen) assigneeSearchRef.current?.focus();
+  }, [assigneeOpen]);
   const capabilitySourceId =
     statusChange?.state === "queued"
       ? statusChange.base.id
@@ -118,8 +136,8 @@ export function IssueEditors({
     capabilities.data.sourceStatusId === capabilitySourceId;
 
   useEffect(() => {
-    if (!stateUnavailable && issueChanges.length === 0) setSyncError("");
-  }, [issueChanges.length, stateUnavailable]);
+    if (!stateUnavailable && issueChanges.length === 0) clearSyncError();
+  }, [clearSyncError, issueChanges.length, stateUnavailable]);
 
   useEffect(() => {
     const online = () => setOnlineHint(true);
@@ -161,57 +179,43 @@ export function IssueEditors({
     workspaceKey,
   ]);
 
-  async function save(change: ChangeRequest) {
-    const field = change.field;
-    setSaving(field);
-    setSaveError("");
-    setSyncError("");
-    setNotice("");
-    try {
-      const queued = await edits.enqueue(
-        workspaceKey,
-        issue.issue.id,
-        change,
-        accountKey,
-      );
-      setNotice(queued ? "Saved locally" : "Queued change cancelled");
-      await Promise.all([
-        client.invalidateQueries({ queryKey: ["cached-issues", accountKey] }),
-        client.invalidateQueries({ queryKey: ["cached-issue", accountKey] }),
-        client.invalidateQueries({ queryKey: ["changes", accountKey] }),
-      ]);
-      void requestEditSync(accountKey).catch((cause) =>
-        setSyncError(errorMessage(cause)),
-      );
-    } catch (cause) {
-      setSaveError(errorMessage(cause));
-    } finally {
-      setSaving(null);
-    }
-  }
-
-  async function cancelQueued(change: PendingChange) {
-    setSaving(change.field);
-    setSaveError("");
-    try {
-      await edits.resolve(change.id, "discard");
-      setNotice("Queued change cancelled");
-      await Promise.all([
-        client.invalidateQueries({ queryKey: ["cached-issues", accountKey] }),
-        client.invalidateQueries({ queryKey: ["cached-issue", accountKey] }),
-        client.invalidateQueries({ queryKey: ["changes", accountKey] }),
-      ]);
-    } catch (cause) {
-      setSaveError(errorMessage(cause));
-    } finally {
-      setSaving(null);
-    }
-  }
-
   const data = capabilities.data;
   const transitions = data?.transitions ?? [];
   const assignees = data?.assignees ?? [];
   const unsupported = transitions.filter((transition) => !transition.supported);
+  const assigneeChoices = [
+    ...(data?.canUnassign ? [{ id: "", displayName: "Unassigned" }] : []),
+    ...assignees,
+  ];
+
+  function chooseAssignee(accountId: string | null) {
+    setAssigneeOpen(false);
+    setAssigneeSearch("");
+    setActiveAssigneeIndex(0);
+    clearNotice();
+    void save({ field: "assignee", accountId });
+  }
+
+  function handleAssigneeKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setAssigneeOpen(false);
+      setAssigneeSearch("");
+      assigneeTriggerRef.current?.focus();
+    } else if (event.key === "ArrowDown" && assigneeChoices.length) {
+      event.preventDefault();
+      setActiveAssigneeIndex((index) =>
+        Math.min(index + 1, assigneeChoices.length - 1),
+      );
+    } else if (event.key === "ArrowUp" && assigneeChoices.length) {
+      event.preventDefault();
+      setActiveAssigneeIndex((index) => Math.max(index - 1, 0));
+    } else if (event.key === "Enter" && assigneeChoices[activeAssigneeIndex]) {
+      event.preventDefault();
+      chooseAssignee(assigneeChoices[activeAssigneeIndex].id || null);
+    }
+  }
 
   return (
     <section className="issue-editors" aria-label="Issue actions">
@@ -316,7 +320,7 @@ export function IssueEditors({
             <Button
               variant="secondary"
               className="secondary-button"
-              onClick={() => void cancelQueued(statusChange)}
+              onClick={() => void cancel(statusChange)}
               disabled={saving === "status"}
             >
               Keep current Jira status
@@ -325,24 +329,34 @@ export function IssueEditors({
         </div>
       </details>
 
-      <details className="editor-section">
-        <summary className="editor-property-summary">
-          <span className="editor-property-name">Assignee</span>
-          <strong>{issue.issue.assignee?.displayName ?? "Unassigned"}</strong>
+      <section className="issue-property-editor" aria-label="Assignee">
+        <span className="editor-property-name">Assignee</span>
+        <div className="issue-assignee-anchor">
+          <button
+            ref={assigneeTriggerRef}
+            type="button"
+            className="issue-assignee-value"
+            aria-haspopup="listbox"
+            aria-expanded={assigneeOpen}
+            aria-controls={`assignee-options-${issue.issue.id}`}
+            disabled={assigneeLocked || saving === "assignee"}
+            onClick={() => {
+              setAssigneeOpen((open) => !open);
+              setAssigneeSearch("");
+              setActiveAssigneeIndex(0);
+            }}
+          >
+            <span>{issue.issue.assignee?.displayName ?? "Unassigned"}</span>
+            <span aria-hidden="true">⌄</span>
+          </button>
           {assigneeChange && (
             <span className="editor-pending-value">
               {assigneeChange.requested.label} · {assigneeChange.state}
             </span>
           )}
-          <span className="editor-property-action">Change</span>
-        </summary>
-        <div className="editor-control-panel">
-          {assigneeLocked ? (
+          {assigneeLocked && (
             assigneeChange ? (
-              <LockedMessage
-                change={assigneeChange}
-                onShowChanges={onShowChanges}
-              />
+              <LockedMessage change={assigneeChange} onShowChanges={onShowChanges} />
             ) : (
               <p className="editor-locked">
                 {changes.isError
@@ -350,84 +364,86 @@ export function IssueEditors({
                   : "Checking pending edits…"}
               </p>
             )
-          ) : (
-            <>
+          )}
+          {assigneeOpen && !assigneeLocked && (
+            <div className="issue-assignee-picker">
               <label className="assignee-search">
-                <Search size={14} />
+                <Search size={14} aria-hidden="true" />
                 <Input
+                  ref={assigneeSearchRef}
+                  role="combobox"
+                  aria-expanded="true"
+                  aria-controls={`assignee-options-${issue.issue.id}`}
+                  aria-autocomplete="list"
+              aria-activedescendant={
+                assigneeChoices[activeAssigneeIndex]
+                  ? `assignee-option-${issue.issue.id}-${activeAssigneeIndex}`
+                  : undefined
+              }
                   value={assigneeSearch}
-                  onChange={(event) => setAssigneeSearch(event.target.value)}
-                  placeholder="Search assignable teammates"
+                  onChange={(event) => {
+                    setAssigneeSearch(event.target.value);
+                    setActiveAssigneeIndex(0);
+                  }}
+                  onKeyDown={handleAssigneeKeyDown}
+                  placeholder="Search teammates"
                   aria-label="Search assignable teammates"
                 />
               </label>
-              <label className="editor-label">
-                Assign to
-                <select
-                  aria-label="Assign to"
-                  value=""
-                  disabled={
-                    !data?.canAssign ||
-                    (!onlineHint && !assignees.length) ||
-                    saving === "assignee"
-                  }
-                  onChange={(event) => {
-                    if (event.target.value) {
-                      void save({
-                        field: "assignee",
-                        accountId: event.target.value,
-                      });
-                    }
-                  }}
-                >
-                  <option value="">
-                    {!data?.canAssign
-                      ? "Connect once to load options"
-                      : assignees.length
+              <p className="issue-assignee-status" role="status">
+                {capabilities.isPending || capabilities.isFetching
+                  ? "Searching Jira…"
+                  : !onlineHint
+                    ? assignees.length || data?.canUnassign
+                      ? "Offline · showing saved options"
+                      : "Offline · connect to search Jira"
+                  : capabilityError || capabilities.isError
+                    ? "Could not check Jira assignment permission"
+                    : data?.canAssign || data?.canUnassign
+                      ? assignees.length || (data.canUnassign && !assigneeSearch)
                         ? "Choose a teammate"
-                        : "No cached matches"}
-                  </option>
-                  {assignees.map((person) => (
-                    <option key={person.id} value={person.id}>
-                      {person.displayName}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <p className="editor-hint">
-                Search results may be incomplete. Unassigning is not available
-                here.
+                        : assigneeSearch
+                          ? "No matches"
+                          : "No assignable teammates"
+                      : "Jira does not allow assignment for this issue"}
               </p>
+              <div
+                id={`assignee-options-${issue.issue.id}`}
+                role="listbox"
+                aria-label="Assignable teammates"
+              >
+                {assigneeChoices.map((person, index) => (
+                  <button
+                    key={person.id || "unassigned"}
+                    id={`assignee-option-${issue.issue.id}-${index}`}
+                    type="button"
+                    role="option"
+                    aria-selected={index === activeAssigneeIndex}
+                    className="issue-assignee-option"
+                    onMouseEnter={() => setActiveAssigneeIndex(index)}
+                    onClick={() => chooseAssignee(person.id || null)}
+                  >
+                    {person.displayName}
+                  </button>
+                ))}
+              </div>
               {data?.assigneesCapturedAt && (
-                <CapabilityStamp
-                  capturedAt={data.assigneesCapturedAt}
-                  online={onlineHint}
-                />
+                <CapabilityStamp capturedAt={data.assigneesCapturedAt} online={onlineHint} />
               )}
-              {!data?.canAssign && (
-                <p className="editor-hint">
-                  Connect once to load assignable teammates for this issue.
-                </p>
+              {assigneeChange?.state === "queued" && !assigneeChange.attempted && (
+                <Button
+                  variant="secondary"
+                  className="secondary-button"
+                  onClick={() => void cancel(assigneeChange)}
+                  disabled={saving === "assignee"}
+                >
+                  Keep current Jira assignee
+                </Button>
               )}
-              {data?.canAssign && !assignees.length && !onlineHint && (
-                <p className="editor-hint">
-                  No cached matches for this search. Connect to search Jira.
-                </p>
-              )}
-            </>
-          )}
-          {assigneeChange?.state === "queued" && !assigneeChange.attempted && (
-            <Button
-              variant="secondary"
-              className="secondary-button"
-              onClick={() => void cancelQueued(assigneeChange)}
-              disabled={saving === "assignee"}
-            >
-              Keep current Jira assignee
-            </Button>
+            </div>
           )}
         </div>
-      </details>
+      </section>
 
       {capabilityError && (
         <Alert variant="warning">

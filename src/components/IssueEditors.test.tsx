@@ -218,9 +218,11 @@ describe("issue status and assignee editors", () => {
       assigneesCapturedAt: null,
     });
     mount();
-    expect(
-      await screen.findByText("Connect once to load options"),
-    ).toBeInTheDocument();
+    const assignee = await screen.findByRole("button", { name: /Unassigned/ });
+    await waitFor(() => expect(assignee).toBeEnabled());
+    fireEvent.click(assignee);
+    await waitFor(() => expect(assignee).toHaveAttribute("aria-expanded", "true"));
+    expect(await screen.findByRole("status")).toHaveTextContent(/Offline · connect to search Jira/);
     expect(
       screen.getByRole("combobox", { name: "Available Jira transitions" }),
     ).toBeDisabled();
@@ -315,7 +317,7 @@ describe("issue status and assignee editors", () => {
     expect(
       screen.queryByRole("combobox", { name: "Available Jira transitions" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Assign to" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Unassigned/ })).toBeEnabled();
   });
 
   it("uses a queued transition's base status for replacement, not its projection", async () => {
@@ -361,7 +363,63 @@ describe("issue status and assignee editors", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /unavailable/ })).toBeDisabled();
     expect(
-      screen.queryByRole("option", { name: /unassign/i }),
+      screen.queryByRole("option", { name: /unassigned/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("opens assignee search from the current value and queues a teammate on selection", async () => {
+    mount();
+    const trigger = await screen.findByRole("button", { name: /Unassigned/ });
+    await waitFor(() => expect(trigger).toBeEnabled());
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    const search = await screen.findByRole("combobox", {
+      name: "Search assignable teammates",
+    });
+    fireEvent.change(search, { target: { value: "Nad" } });
+    await waitFor(() =>
+      expect(edits.capabilities).toHaveBeenCalledWith(key, "100", true, "Nad"),
+    );
+    fireEvent.click(await screen.findByRole("option", { name: "Nadia" }));
+    await waitFor(() =>
+      expect(edits.enqueue).toHaveBeenCalledWith(
+        key,
+        "100",
+        { field: "assignee", accountId: "user-1" },
+        accountKey,
+      ),
+    );
+  });
+
+  it("offers unassign only when Jira capability metadata allows it", async () => {
+    vi.mocked(edits.capabilities).mockResolvedValue({
+      ...capabilities,
+      canUnassign: true,
+    });
+    mount();
+    const trigger = await screen.findByRole("button", { name: /Unassigned/ });
+    await waitFor(() => expect(trigger).toBeEnabled());
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByRole("option", { name: "Unassigned" }));
+    await waitFor(() =>
+      expect(edits.enqueue).toHaveBeenCalledWith(
+        key,
+        "100",
+        { field: "assignee", accountId: null },
+        accountKey,
+      ),
+    );
+  });
+
+  it("closes the assignee picker on Escape and restores focus to the current value", async () => {
+    mount();
+    const trigger = await screen.findByRole("button", { name: /Unassigned/ });
+    await waitFor(() => expect(trigger).toBeEnabled());
+    fireEvent.click(trigger);
+    const search = await screen.findByRole("combobox", { name: "Search assignable teammates" });
+    expect(search).toHaveFocus();
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveFocus();
   });
 });

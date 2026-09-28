@@ -2,9 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { IssueSummary, WorkspaceKey } from "./workspace";
 
-export type ChangeField = "status" | "assignee";
+export type ChangeField = "status" | "assignee" | "summary" | "description" | "sprint";
 export type ChangeState = "queued" | "sending" | "confirming" | "blocked" | "conflict" | "unknown";
-export type FieldValue = { id: string | null; label: string };
+export type FieldValue = { id: string | null; label: string; value?: unknown };
 export type PendingChange = WorkspaceKey & {
   id: number;
   issueId: string;
@@ -33,12 +33,18 @@ export type IssueCapabilities = {
   }[];
   assignees: NonNullable<IssueSummary["assignee"]>[];
   canAssign: boolean;
+  canEditSummary?: boolean;
+  canEditDescription?: boolean;
+  canUnassign?: boolean;
   assigneeQuery: string;
   assigneesComplete: boolean;
 };
 export type ChangeRequest =
   | { field: "status"; transitionId: string }
-  | { field: "assignee"; accountId: string };
+  | { field: "assignee"; accountId: string | null }
+  | { field: "summary"; summary: string }
+  | { field: "description"; description: unknown }
+  | { field: "sprint"; sourceSprintId: number; targetSprintId: number };
 export type ChangeResolution = "discard" | "keepMine" | "recheck" | "retry";
 export type WorkspaceChangeEvent = {
   owner: { siteUrl: string; email: string };

@@ -57,6 +57,7 @@ export function useEditRuntime(session: Session | null | undefined, accountKey: 
         client.invalidateQueries({ queryKey: ["cached-workspace", accountKey] }),
         client.invalidateQueries({ queryKey: ["cached-issues", accountKey] }),
         client.invalidateQueries({ queryKey: ["cached-issue", accountKey] }),
+        client.invalidateQueries({ queryKey: ["cached-daily", accountKey] }),
         client.invalidateQueries({ queryKey: ["issue-capabilities", accountKey] }),
       ]);
     };

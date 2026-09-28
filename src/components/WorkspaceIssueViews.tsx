@@ -1,5 +1,10 @@
-import type { IssueSummary } from "../lib/workspace";
 import type { PendingChange } from "../lib/edits";
+import type { IssueSummary, WorkspaceKey } from "../lib/workspace";
+import {
+  StatusDragDrop,
+  StatusDragRow,
+  StatusDropTarget,
+} from "./StatusDragDrop";
 
 export type StatusColumn = {
   name: string;
@@ -12,6 +17,8 @@ type IssueViewProps = {
   columns: StatusColumn[];
   selectedId: string | null;
   changesByIssue: Map<string, PendingChange[]>;
+  accountKey: string;
+  workspaceKey: WorkspaceKey;
   onOpen: (issue: IssueSummary, button: HTMLButtonElement) => void;
 };
 
@@ -20,58 +27,84 @@ export function WorkspaceList({
   columns,
   selectedId,
   changesByIssue,
+  accountKey,
+  workspaceKey,
   onOpen,
 }: IssueViewProps) {
-  const grouped = columns
-    .map((column) => ({
-      title: column.name,
-      category: column.issues[0]?.status.category ?? "indeterminate",
-      issues: column.issues,
-    }))
-    .filter((group) => group.issues.length > 0);
   const mappedIds = new Set(
-    columns.flatMap((column) => column.issues.map((item) => item.id)),
+    columns.flatMap((column) => column.issues.map((issue) => issue.id)),
   );
   const other = issues.filter((issue) => !mappedIds.has(issue.id));
-  if (other.length)
-    grouped.push({
-      title: "Other statuses",
-      category: "indeterminate",
-      issues: other,
-    });
 
   return (
-    <div className="workspace-list">
-      {grouped.map((group) => (
-        <section className="workspace-group" key={group.title}>
-          <h2 className="workspace-group-heading">
-            <span
-              className={`workspace-status-dot ${group.category}`}
-              aria-hidden="true"
-            />
-            <span>{group.title}</span>
-            <span
-              className="workspace-page-count"
-              aria-label={`${group.issues.length} issues on this page`}
-            >
-              {group.issues.length} on this page
-            </span>
-          </h2>
-          <ul className="workspace-issue-list">
-            {group.issues.map((issue) => (
-              <li key={issue.id}>
-                <IssueRow
-                  issue={issue}
-                  selected={selectedId === issue.id}
-                  pending={changesByIssue.get(issue.id) ?? []}
-                  onOpen={onOpen}
+    <StatusDragDrop
+      accountKey={accountKey}
+      workspaceKey={workspaceKey}
+      columns={columns}
+    >
+      <div className="workspace-list">
+        {columns.map((column) => (
+          <StatusDropTarget column={column} key={column.name}>
+            <section className="workspace-group">
+              <h2 className="workspace-group-heading">
+                <span
+                  className={`workspace-status-dot ${column.issues[0]?.status.category ?? "indeterminate"}`}
+                  aria-hidden="true"
                 />
-              </li>
-            ))}
-          </ul>
-        </section>
-      ))}
-    </div>
+                <span>{column.name}</span>
+                <span
+                  className="workspace-page-count"
+                  aria-label={`${column.issues.length} issues on this page`}
+                >
+                  {column.issues.length} on this page
+                </span>
+              </h2>
+              <ul className="workspace-issue-list">
+                {column.issues.map((issue) => (
+                  <li key={issue.id}>
+                    <IssueRow
+                      issue={issue}
+                      selected={selectedId === issue.id}
+                      pending={changesByIssue.get(issue.id) ?? []}
+                      onOpen={onOpen}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          </StatusDropTarget>
+        ))}
+        {other.length > 0 && (
+          <section className="workspace-group">
+            <h2 className="workspace-group-heading">
+              <span
+                className="workspace-status-dot indeterminate"
+                aria-hidden="true"
+              />
+              <span>Other statuses</span>
+              <span
+                className="workspace-page-count"
+                aria-label={`${other.length} issues on this page`}
+              >
+                {other.length} on this page
+              </span>
+            </h2>
+            <ul className="workspace-issue-list">
+              {other.map((issue) => (
+                <li key={issue.id}>
+                  <IssueRow
+                    issue={issue}
+                    selected={selectedId === issue.id}
+                    pending={changesByIssue.get(issue.id) ?? []}
+                    onOpen={onOpen}
+                  />
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+      </div>
+    </StatusDragDrop>
   );
 }
 
@@ -80,59 +113,88 @@ export function WorkspaceBoard({
   columns,
   selectedId,
   changesByIssue,
+  accountKey,
+  workspaceKey,
   onOpen,
 }: IssueViewProps) {
-  const grouped = columns.map((column) => ({
-    title: column.name,
-    category: column.issues[0]?.status.category ?? "indeterminate",
-    issues: column.issues,
-  }));
   const mappedIds = new Set(
-    columns.flatMap((column) => column.issues.map((item) => item.id)),
+    columns.flatMap((column) => column.issues.map((issue) => issue.id)),
   );
   const other = issues.filter((issue) => !mappedIds.has(issue.id));
-  if (other.length)
-    grouped.push({
-      title: "Other statuses",
-      category: "indeterminate",
-      issues: other,
-    });
 
   return (
-    <div className="workspace-board-scroll">
-      <div className="workspace-board" aria-label="Issues grouped by status">
-        {grouped.map((group) => (
-          <section className="workspace-column" key={group.title}>
-            <h2 className="workspace-column-heading">
-              <span
-                className={`workspace-status-dot ${group.category}`}
-                aria-hidden="true"
-              />
-              <span>{group.title}</span>
-              <span
-                className="workspace-page-count"
-                aria-label={`${group.issues.length} issues on this page`}
-              >
-                {group.issues.length}
-              </span>
-            </h2>
-            <ul className="workspace-issue-list">
-              {group.issues.map((issue) => (
-                <li key={issue.id}>
-                  <IssueRow
-                    issue={issue}
-                    selected={selectedId === issue.id}
-                    pending={changesByIssue.get(issue.id) ?? []}
-                    onOpen={onOpen}
-                    board
+    <StatusDragDrop
+      accountKey={accountKey}
+      workspaceKey={workspaceKey}
+      columns={columns}
+    >
+      <div className="workspace-board-scroll">
+        <div className="workspace-board" aria-label="Issues grouped by status">
+          {columns.map((column) => (
+            <StatusDropTarget column={column} key={column.name}>
+              <section className="workspace-column">
+                <h2 className="workspace-column-heading">
+                  <span
+                    className={`workspace-status-dot ${column.issues[0]?.status.category ?? "indeterminate"}`}
+                    aria-hidden="true"
                   />
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
+                  <span>{column.name}</span>
+                  <span
+                    className="workspace-page-count"
+                    aria-label={`${column.issues.length} issues on this page`}
+                  >
+                    {column.issues.length}
+                  </span>
+                </h2>
+                <ul className="workspace-issue-list">
+                  {column.issues.map((issue) => (
+                    <li key={issue.id}>
+                      <IssueRow
+                        issue={issue}
+                        selected={selectedId === issue.id}
+                        pending={changesByIssue.get(issue.id) ?? []}
+                        onOpen={onOpen}
+                        board
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            </StatusDropTarget>
+          ))}
+          {other.length > 0 && (
+            <section className="workspace-column">
+              <h2 className="workspace-column-heading">
+                <span
+                  className="workspace-status-dot indeterminate"
+                  aria-hidden="true"
+                />
+                <span>Other statuses</span>
+                <span
+                  className="workspace-page-count"
+                  aria-label={`${other.length} issues on this page`}
+                >
+                  {other.length}
+                </span>
+              </h2>
+              <ul className="workspace-issue-list">
+                {other.map((issue) => (
+                  <li key={issue.id}>
+                    <IssueRow
+                      issue={issue}
+                      selected={selectedId === issue.id}
+                      pending={changesByIssue.get(issue.id) ?? []}
+                      onOpen={onOpen}
+                      board
+                    />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </div>
       </div>
-    </div>
+    </StatusDragDrop>
   );
 }
 
@@ -180,45 +242,49 @@ function IssueRow({
   board?: boolean;
 }) {
   return (
-    <button
-      type="button"
-      className={
-        board
-          ? `workspace-row workspace-board-card${selected ? " selected" : ""}`
-          : `workspace-row${selected ? " selected" : ""}`
-      }
-      data-issue-id={issue.id}
-      aria-pressed={selected}
-      onClick={(event) => onOpen(issue, event.currentTarget)}
+    <StatusDragRow
+      issue={issue}
+      pending={pending}
+      className={`${board ? "workspace-board-card" : ""}${selected ? " selected" : ""}`}
     >
-      <span className="workspace-row-status-cell">
-        <span
-          className={`workspace-row-status ${issue.status.category}`}
-          aria-label={`Status: ${issue.status.name}`}
-        />
-        <span className="workspace-row-status-label">{issue.status.name}</span>
-      </span>
-      <span className="workspace-row-key">{issue.key}</span>
-      <span className="workspace-row-title">{issue.summary}</span>
-      <span className="workspace-row-assignee">
-        {issue.assignee?.displayName ?? "Unassigned"}
-      </span>
-      {issue.storyPoints !== null && (
-        <span className="workspace-row-points">{issue.storyPoints} pts</span>
-      )}
-      {pending.length > 0 && (
-        <span
-          className="workspace-row-pending"
-          aria-label={`Pending: ${pending.map((change) => `${change.field} ${change.state}`).join(", ")}`}
-        >
-          {pending.some((change) =>
-            ["blocked", "conflict", "unknown"].includes(change.state),
-          )
-            ? "Needs attention"
-            : "Saved locally"}
+      <button
+        type="button"
+        className="workspace-row-open"
+        data-issue-id={issue.id}
+        aria-pressed={selected}
+        onClick={(event) => onOpen(issue, event.currentTarget)}
+      >
+        <span className="workspace-row-status-cell">
+          <span
+            className={`workspace-row-status ${issue.status.category}`}
+            aria-label={`Status: ${issue.status.name}`}
+          />
+          <span className="workspace-row-status-label">
+            {issue.status.name}
+          </span>
         </span>
-      )}
-    </button>
+        <span className="workspace-row-key">{issue.key}</span>
+        <span className="workspace-row-title">{issue.summary}</span>
+        <span className="workspace-row-assignee">
+          {issue.assignee?.displayName ?? "Unassigned"}
+        </span>
+        {issue.storyPoints !== null && (
+          <span className="workspace-row-points">{issue.storyPoints} pts</span>
+        )}
+        {pending.length > 0 && (
+          <span
+            className="workspace-row-pending"
+            aria-label={`Pending: ${pending.map((change) => `${change.field} ${change.state}`).join(", ")}`}
+          >
+            {pending.some((change) =>
+              ["blocked", "conflict", "unknown"].includes(change.state),
+            )
+              ? "Needs attention"
+              : "Saved locally"}
+          </span>
+        )}
+      </button>
+    </StatusDragRow>
   );
 }
 

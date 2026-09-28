@@ -41,7 +41,7 @@ pub(super) fn open(path: &Path) -> Result<Connection> {
     let version: i64 = db
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(db_error)?;
-    if version > 2 {
+    if version > 3 {
         return Err(AppError::CacheVersion);
     }
     if version == 0 {
@@ -51,7 +51,7 @@ pub(super) fn open(path: &Path) -> Result<Connection> {
         let current: i64 = tx
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .map_err(db_error)?;
-        if current > 2 {
+        if current > 3 {
             return Err(AppError::CacheVersion);
         }
         if current == 0 {
@@ -83,6 +83,7 @@ pub(super) fn open(path: &Path) -> Result<Connection> {
         tx.commit().map_err(db_error)?;
     }
     migrate_v1(&mut db)?;
+    migrate_v2(&mut db)?;
     Ok(db)
 }
 
@@ -93,7 +94,7 @@ fn migrate_v1(db: &mut Connection) -> Result<()> {
     let version: i64 = tx
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(db_error)?;
-    if version > 2 {
+    if version > 3 {
         return Err(AppError::CacheVersion);
     }
     if version < 2 {
@@ -173,6 +174,33 @@ fn migrate_v1(db: &mut Connection) -> Result<()> {
             tx.execute("INSERT INTO canonical_issues(site,account,issue_id,issue_key,summary,status_json,assignee_json,updated,uncertain,detail_json) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)", params![site,account,issue_id,chosen.summary.key,chosen.summary.summary,serde_json::to_string(&chosen.summary.status).map_err(db_error)?,serde_json::to_string(&chosen.summary.assignee).map_err(db_error)?,chosen.summary.updated,uncertain as i64,serde_json::to_string(&chosen.detail).map_err(db_error)?]).map_err(db_error)?;
         }
         tx.pragma_update(None, "user_version", 2)
+            .map_err(db_error)?;
+    }
+    tx.commit().map_err(db_error)
+}
+
+fn migrate_v2(db: &mut Connection) -> Result<()> {
+    let tx = db
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(db_error)?;
+    let version: i64 = tx
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(db_error)?;
+    if version > 3 {
+        return Err(AppError::CacheVersion);
+    }
+    if version < 3 {
+        tx.execute_batch(
+            "ALTER TABLE capabilities ADD COLUMN can_unassign INTEGER NOT NULL DEFAULT 0;\
+            ALTER TABLE capabilities ADD COLUMN can_edit_summary INTEGER NOT NULL DEFAULT 0;\
+            ALTER TABLE capabilities ADD COLUMN can_edit_description INTEGER NOT NULL DEFAULT 0;\
+            ALTER TABLE capabilities ADD COLUMN edit_capabilities_at TEXT;\
+            ALTER TABLE changes ADD COLUMN source_sprint_id INTEGER;\
+            ALTER TABLE changes ADD COLUMN target_sprint_id INTEGER;",
+        )
+        .map_err(db_error)?;
+        super::daily::migrate(&tx)?;
+        tx.pragma_update(None, "user_version", 3)
             .map_err(db_error)?;
     }
     tx.commit().map_err(db_error)
@@ -281,7 +309,7 @@ pub(super) fn issue(
         .map(|json| serde_json::from_str::<IssueDetail>(&json).map_err(db_error))
         .transpose()?;
     if let Some(detail) = &mut detail {
-        overlay_issue(db, owner, detail)?;
+        overlay_issue(db, owner, project_key, board_id, detail)?;
     }
     if detail.is_none() {
         let pinned: Option<String> = db.query_row("SELECT detail_json FROM changes WHERE site=?1 AND account=?2 AND issue_id=?3 AND project_key=?4 AND board_id=?5 AND state NOT IN ('confirmed','discarded') ORDER BY sequence DESC LIMIT 1",params![owner.site_url,owner.email,issue_id,project_key,board_id],|row|row.get(0)).optional().map_err(db_error)?;
@@ -289,32 +317,57 @@ pub(super) fn issue(
             .map(|json| serde_json::from_str::<IssueDetail>(&json).map_err(db_error))
             .transpose()?;
         if let Some(detail) = &mut detail {
-            overlay_issue(db, owner, detail)?;
+            overlay_issue(db, owner, project_key, board_id, detail)?;
         }
     }
     Ok(detail)
 }
 
-fn overlay_issue(db: &Connection, owner: &Owner, detail: &mut IssueDetail) -> Result<()> {
-    let canonical: Option<(String,Option<String>,String)> = db.query_row(
-        "SELECT status_json,assignee_json,updated FROM canonical_issues WHERE site=?1 AND account=?2 AND issue_id=?3",
+fn overlay_issue(
+    db: &Connection,
+    owner: &Owner,
+    project_key: &str,
+    board_id: i64,
+    detail: &mut IssueDetail,
+) -> Result<()> {
+    let canonical: Option<(String,Option<String>,String,String,Option<String>)> = db.query_row(
+        "SELECT status_json,assignee_json,updated,summary,detail_json FROM canonical_issues WHERE site=?1 AND account=?2 AND issue_id=?3",
         params![owner.site_url,owner.email,detail.issue.id],
-        |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+        |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?)),
     ).optional().map_err(db_error)?;
-    if let Some((status, assignee, updated)) = canonical {
+    if let Some((status, assignee, updated, summary, canonical_detail)) = canonical {
         detail.issue.status = serde_json::from_str(&status).map_err(db_error)?;
         detail.issue.assignee = assignee
             .map(|value| serde_json::from_str(&value).map_err(db_error))
             .transpose()?
             .flatten();
         detail.issue.updated = updated;
+        detail.issue.summary = summary;
+        if let Some(canonical_detail) =
+            canonical_detail.and_then(|json| serde_json::from_str::<IssueDetail>(&json).ok())
+        {
+            detail.description = canonical_detail.description.clone();
+            for field in ["summary", "description"] {
+                if let Some(value) = canonical_detail.fields.get(field) {
+                    detail.fields.insert(field.into(), value.clone());
+                }
+            }
+        }
     }
-    let pending: Vec<(String, String, Option<String>)> = {
-        let mut stmt = db.prepare("SELECT field,requested_json,target_json FROM changes WHERE site=?1 AND account=?2 AND issue_id=?3 AND state NOT IN ('confirmed','discarded') ORDER BY sequence DESC").map_err(db_error)?;
+    let pending: Vec<(String, String, Option<String>, String, i64)> = {
+        let mut stmt = db.prepare("SELECT field,requested_json,target_json,project_key,board_id FROM changes WHERE site=?1 AND account=?2 AND issue_id=?3 AND state NOT IN ('confirmed','discarded') ORDER BY sequence DESC").map_err(db_error)?;
         let rows = stmt
             .query_map(
                 params![owner.site_url, owner.email, detail.issue.id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
             )
             .map_err(db_error)?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -322,7 +375,11 @@ fn overlay_issue(db: &Connection, owner: &Owner, detail: &mut IssueDetail) -> Re
     };
     let mut status_override = None;
     let mut assignee_override = None;
-    for (field, requested, target) in pending {
+    let mut summary_override = None;
+    let mut description_override = None;
+    let mut sprint_source_removals = Vec::new();
+    let mut sprint_target_additions = Vec::new();
+    for (field, requested, target, change_project, change_board) in pending {
         if field == "status" && status_override.is_none() {
             status_override = target
                 .map(|value| {
@@ -332,17 +389,59 @@ fn overlay_issue(db: &Connection, owner: &Owner, detail: &mut IssueDetail) -> Re
         } else if field == "assignee" && assignee_override.is_none() {
             let value: super::model::FieldValue =
                 serde_json::from_str(&requested).map_err(db_error)?;
-            assignee_override = value.id.map(|id| super::model::Assignee {
+            assignee_override = Some(value.id.map(|id| super::model::Assignee {
                 id,
                 display_name: value.label,
-            });
+            }));
+        } else if field == "summary" && summary_override.is_none() {
+            summary_override = serde_json::from_str::<super::model::FieldValue>(&requested)
+                .ok()
+                .and_then(|value| value.value)
+                .and_then(|value| value.as_str().map(str::to_owned));
+        } else if field == "description" && description_override.is_none() {
+            description_override = serde_json::from_str::<super::model::FieldValue>(&requested)
+                .ok()
+                .and_then(|value| value.value);
+        } else if field == "sprint" {
+            if let Some(value) = serde_json::from_str::<super::model::FieldValue>(&requested)
+                .ok()
+                .and_then(|field| field.value)
+            {
+                if let Some(source) = value.get("sourceSprintId").and_then(Value::as_i64) {
+                    sprint_source_removals.push(source);
+                }
+                if change_project == project_key && change_board == board_id {
+                    if let Some(target) = value.get("targetSprintId").and_then(Value::as_i64) {
+                        sprint_target_additions.push(target);
+                    }
+                }
+            }
         }
     }
     if let Some(status) = status_override {
         detail.issue.status = status;
     }
     if let Some(assignee) = assignee_override {
-        detail.issue.assignee = Some(assignee);
+        detail.issue.assignee = assignee;
+    }
+    if let Some(summary) = summary_override {
+        detail.issue.summary = summary;
+        detail.fields.insert(
+            "summary".into(),
+            Value::String(detail.issue.summary.clone()),
+        );
+    }
+    if let Some(description) = description_override {
+        detail.description = description.clone();
+        detail.fields.insert("description".into(), description);
+    }
+    for source in sprint_source_removals {
+        detail.issue.sprint_ids.retain(|id| *id != source);
+    }
+    if let Some(target) = sprint_target_additions.first().copied() {
+        if !detail.issue.sprint_ids.contains(&target) {
+            detail.issue.sprint_ids.push(target);
+        }
     }
     let status_raw = raw_status(detail.fields.get("status"), &detail.issue.status);
     let assignee_raw = raw_assignee(
@@ -411,7 +510,29 @@ pub(super) fn issues(db: &Connection, owner: &Owner, filter: &IssueFilter) -> Re
             .collect::<String>()
     );
     let sprint_id = filter.sprint_id.unwrap_or(0);
-    let where_sql = "i.site=?1 AND i.account=?2 AND i.project_key=?3 AND i.board_id=?4 AND (i.issue_key LIKE ?5 ESCAPE '\\' OR i.summary LIKE ?5 ESCAPE '\\') AND (?6='all' OR EXISTS(SELECT 1 FROM memberships m WHERE m.site=i.site AND m.account=i.account AND m.project_key=i.project_key AND m.board_id=i.board_id AND m.issue_id=i.issue_id AND m.view=?6 AND m.sprint_id=?7))";
+    // Pending edits participate before count/search/pagination so the list and
+    // its total reflect the same projection that overlay_summary returns.
+    let where_sql = concat!(
+        "i.site=?1 AND i.account=?2 AND i.project_key=?3 AND i.board_id=?4 AND ",
+        "(i.issue_key LIKE ?5 ESCAPE '\\' OR COALESCE((",
+        "SELECT json_extract(c.requested_json,'$.value') FROM changes c ",
+        "WHERE c.site=i.site AND c.account=i.account AND c.issue_id=i.issue_id ",
+        "AND c.field='summary' AND c.state NOT IN ('confirmed','discarded') ",
+        "ORDER BY c.sequence DESC LIMIT 1),(",
+        "SELECT ci.summary FROM canonical_issues ci WHERE ci.site=i.site ",
+        "AND ci.account=i.account AND ci.issue_id=i.issue_id),i.summary) ",
+        "LIKE ?5 ESCAPE '\\') AND (?6='all' OR ",
+        "EXISTS(SELECT 1 FROM memberships m WHERE m.site=i.site AND m.account=i.account ",
+        "AND m.project_key=i.project_key AND m.board_id=i.board_id AND m.issue_id=i.issue_id ",
+        "AND m.view=?6 AND m.sprint_id=?7 AND NOT (?6='current' AND EXISTS(",
+        "SELECT 1 FROM changes c WHERE c.site=i.site AND c.account=i.account ",
+        "AND c.issue_id=i.issue_id AND c.field='sprint' AND (?7=0 OR c.source_sprint_id=?7) ",
+        "AND c.state NOT IN ('confirmed','discarded')))) OR (?6='future' AND EXISTS(",
+        "SELECT 1 FROM changes c WHERE c.site=i.site AND c.account=i.account ",
+        "AND c.project_key=i.project_key AND c.board_id=i.board_id AND c.issue_id=i.issue_id ",
+        "AND c.field='sprint' AND c.target_sprint_id=?7 ",
+        "AND c.state NOT IN ('confirmed','discarded'))))"
+    );
     let tx = db.unchecked_transaction().map_err(db_error)?;
     let total: i64 = tx
         .query_row(
@@ -428,7 +549,7 @@ pub(super) fn issues(db: &Connection, owner: &Owner, filter: &IssueFilter) -> Re
             |r| r.get(0),
         )
         .map_err(db_error)?;
-    let sql = format!("SELECT i.summary_json FROM issues i WHERE {where_sql} ORDER BY CASE WHEN ?6='all' THEN i.rank ELSE (SELECT m.rank FROM memberships m WHERE m.site=i.site AND m.account=i.account AND m.project_key=i.project_key AND m.board_id=i.board_id AND m.issue_id=i.issue_id AND m.view=?6 AND m.sprint_id=?7) END,i.issue_key,i.issue_id LIMIT ?8 OFFSET ?9");
+    let sql = format!("SELECT i.summary_json FROM issues i WHERE {where_sql} ORDER BY CASE WHEN ?6='all' THEN i.rank ELSE COALESCE((SELECT m.rank FROM memberships m WHERE m.site=i.site AND m.account=i.account AND m.project_key=i.project_key AND m.board_id=i.board_id AND m.issue_id=i.issue_id AND m.view=?6 AND m.sprint_id=?7),i.rank) END,i.issue_key,i.issue_id LIMIT ?8 OFFSET ?9");
     let mut stmt = tx.prepare(&sql).map_err(db_error)?;
     let rows = stmt
         .query_map(
@@ -450,7 +571,7 @@ pub(super) fn issues(db: &Connection, owner: &Owner, filter: &IssueFilter) -> Re
     for row in rows {
         let mut issue: IssueSummary =
             serde_json::from_str(&row.map_err(db_error)?).map_err(db_error)?;
-        overlay_summary(&tx, owner, &mut issue)?;
+        overlay_summary(&tx, owner, &filter.project_key, filter.board_id, &mut issue)?;
         issues.push(issue);
     }
     drop(stmt);
@@ -458,34 +579,44 @@ pub(super) fn issues(db: &Connection, owner: &Owner, filter: &IssueFilter) -> Re
     Ok(IssuePage { issues, total })
 }
 
-fn overlay_summary(db: &Connection, owner: &Owner, issue: &mut IssueSummary) -> Result<()> {
-    let remote: Option<(String,Option<String>,String)> = db.query_row(
-        "SELECT status_json,assignee_json,updated FROM canonical_issues WHERE site=?1 AND account=?2 AND issue_id=?3",
+fn overlay_summary(
+    db: &Connection,
+    owner: &Owner,
+    project_key: &str,
+    board_id: i64,
+    issue: &mut IssueSummary,
+) -> Result<()> {
+    let remote: Option<(String,Option<String>,String,String)> = db.query_row(
+        "SELECT status_json,assignee_json,updated,summary FROM canonical_issues WHERE site=?1 AND account=?2 AND issue_id=?3",
         params![owner.site_url,owner.email,issue.id],
-        |row|Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+        |row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
     ).optional().map_err(db_error)?;
-    if let Some((status, assignee, updated)) = remote {
+    if let Some((status, assignee, updated, summary)) = remote {
         issue.status = serde_json::from_str(&status).map_err(db_error)?;
         issue.assignee = assignee
             .map(|value| serde_json::from_str(&value).map_err(db_error))
             .transpose()?
             .flatten();
         issue.updated = updated;
+        issue.summary = summary;
     }
-    let mut stmt = db.prepare("SELECT field,requested_json,target_json FROM changes WHERE site=?1 AND account=?2 AND issue_id=?3 AND state NOT IN ('confirmed','discarded') ORDER BY sequence DESC").map_err(db_error)?;
+    let mut stmt = db.prepare("SELECT field,requested_json,target_json,project_key,board_id FROM changes WHERE site=?1 AND account=?2 AND issue_id=?3 AND state NOT IN ('confirmed','discarded') ORDER BY sequence DESC").map_err(db_error)?;
     let rows = stmt
         .query_map(params![owner.site_url, owner.email, issue.id], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
             ))
         })
         .map_err(db_error)?;
     let mut has_status = false;
     let mut has_assignee = false;
+    let mut has_summary = false;
     for row in rows {
-        let (field, requested, target) = row.map_err(db_error)?;
+        let (field, requested, target, change_project, change_board) = row.map_err(db_error)?;
         if field == "status" && !has_status {
             if let Some(target) = target {
                 issue.status = serde_json::from_str(&target).map_err(db_error)?;
@@ -499,9 +630,31 @@ fn overlay_summary(db: &Connection, owner: &Owner, issue: &mut IssueSummary) -> 
                 display_name: value.label,
             });
             has_assignee = true;
-        }
-        if has_status && has_assignee {
-            break;
+        } else if field == "summary" && !has_summary {
+            if let Ok(value) = serde_json::from_str::<super::model::FieldValue>(&requested) {
+                if let Some(summary) = value
+                    .value
+                    .and_then(|value| value.as_str().map(str::to_owned))
+                {
+                    issue.summary = summary;
+                    has_summary = true;
+                }
+            }
+        } else if field == "sprint" {
+            if let Ok(value) = serde_json::from_str::<super::model::FieldValue>(&requested) {
+                if let Some(value) = value.value {
+                    if let Some(source) = value.get("sourceSprintId").and_then(Value::as_i64) {
+                        issue.sprint_ids.retain(|id| *id != source);
+                    }
+                    if change_project == project_key && change_board == board_id {
+                        if let Some(target) = value.get("targetSprintId").and_then(Value::as_i64) {
+                            if !issue.sprint_ids.contains(&target) {
+                                issue.sprint_ids.push(target);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     Ok(())
@@ -561,6 +714,7 @@ pub(super) fn publish(db: &mut Connection, owner: &Owner, snapshot: &Snapshot) -
                 .map_err(db_error)?;
         }
     }
+    super::daily::capture(&tx, owner, snapshot)?;
     tx.commit().map_err(db_error)
 }
 
@@ -613,11 +767,11 @@ pub(super) fn capabilities(
     query: &str,
 ) -> Result<super::model::IssueCapabilities> {
     let result: Option<super::model::IssueCapabilities> = db.query_row(
-        "SELECT source_status_id,transitions_json,transitions_at,assignees_json,assignees_at,can_assign,assignee_query,assignees_complete FROM capabilities WHERE site=?1 AND account=?2 AND issue_id=?3 AND assignee_query=?4 ORDER BY transitions_at DESC LIMIT 1",
+        "SELECT source_status_id,transitions_json,transitions_at,assignees_json,assignees_at,can_assign,assignee_query,assignees_complete,can_unassign,can_edit_summary,can_edit_description,edit_capabilities_at FROM capabilities WHERE site=?1 AND account=?2 AND issue_id=?3 AND assignee_query=?4 ORDER BY transitions_at DESC LIMIT 1",
         params![owner.site_url,owner.email,issue_id,query],
         |row| {
             let transitions:String=row.get(1)?; let assignees:String=row.get(3)?;
-            Ok(super::model::IssueCapabilities { source_status_id:row.get(0)?, transitions:serde_json::from_str(&transitions).map_err(|_|rusqlite::Error::InvalidQuery)?, transitions_captured_at:row.get(2)?, assignees:serde_json::from_str(&assignees).map_err(|_|rusqlite::Error::InvalidQuery)?, assignees_captured_at:row.get(4)?, can_assign:row.get::<_,i64>(5)? != 0, assignee_query:row.get(6)?, assignees_complete:row.get::<_,i64>(7)? != 0 })
+            Ok(super::model::IssueCapabilities { source_status_id:row.get(0)?, transitions:serde_json::from_str(&transitions).map_err(|_|rusqlite::Error::InvalidQuery)?, transitions_captured_at:row.get(2)?, assignees:serde_json::from_str(&assignees).map_err(|_|rusqlite::Error::InvalidQuery)?, assignees_captured_at:row.get(4)?, can_assign:row.get::<_,i64>(5)? != 0, assignee_query:row.get(6)?, assignees_complete:row.get::<_,i64>(7)? != 0, can_unassign:row.get::<_,i64>(8)? != 0, can_edit_summary:row.get::<_,i64>(9)? != 0, can_edit_description:row.get::<_,i64>(10)? != 0, edit_capabilities_at:row.get(11)? })
         }
     ).optional().map_err(db_error)?;
     if let Some(result) = result {
@@ -644,6 +798,10 @@ pub(super) fn capabilities(
         transitions: vec![],
         assignees: vec![],
         can_assign: false,
+        can_unassign: false,
+        can_edit_summary: false,
+        can_edit_description: false,
+        edit_capabilities_at: None,
         assignee_query: query.into(),
         assignees_complete: false,
     })
@@ -655,7 +813,7 @@ pub(super) fn save_capabilities(
     caps: &super::model::IssueCapabilities,
     issue_id: &str,
 ) -> Result<()> {
-    db.execute("INSERT INTO capabilities(site,account,issue_id,source_status_id,transitions_json,transitions_at,assignees_json,assignees_at,can_assign,assignee_query,assignees_complete) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) ON CONFLICT(site,account,issue_id,source_status_id,assignee_query) DO UPDATE SET transitions_json=excluded.transitions_json,transitions_at=excluded.transitions_at,assignees_json=excluded.assignees_json,assignees_at=excluded.assignees_at,can_assign=excluded.can_assign,assignees_complete=excluded.assignees_complete",params![owner.site_url,owner.email,issue_id,caps.source_status_id,serde_json::to_string(&caps.transitions).map_err(db_error)?,caps.transitions_captured_at,serde_json::to_string(&caps.assignees).map_err(db_error)?,caps.assignees_captured_at,caps.can_assign as i64,caps.assignee_query,caps.assignees_complete as i64]).map_err(db_error)?;
+    db.execute("INSERT INTO capabilities(site,account,issue_id,source_status_id,transitions_json,transitions_at,assignees_json,assignees_at,can_assign,assignee_query,assignees_complete,can_unassign,can_edit_summary,can_edit_description,edit_capabilities_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15) ON CONFLICT(site,account,issue_id,source_status_id,assignee_query) DO UPDATE SET transitions_json=excluded.transitions_json,transitions_at=excluded.transitions_at,assignees_json=excluded.assignees_json,assignees_at=excluded.assignees_at,can_assign=excluded.can_assign,assignees_complete=excluded.assignees_complete,can_unassign=excluded.can_unassign,can_edit_summary=excluded.can_edit_summary,can_edit_description=excluded.can_edit_description,edit_capabilities_at=excluded.edit_capabilities_at",params![owner.site_url,owner.email,issue_id,caps.source_status_id,serde_json::to_string(&caps.transitions).map_err(db_error)?,caps.transitions_captured_at,serde_json::to_string(&caps.assignees).map_err(db_error)?,caps.assignees_captured_at,caps.can_assign as i64,caps.assignee_query,caps.assignees_complete as i64,caps.can_unassign as i64,caps.can_edit_summary as i64,caps.can_edit_description as i64,caps.edit_capabilities_at]).map_err(db_error)?;
     Ok(())
 }
 
@@ -719,110 +877,275 @@ pub(super) fn enqueue(
         })
         .transpose()?
         .flatten();
+    let board_detail: Option<String> = tx.query_row("SELECT detail_json FROM issues WHERE site=?1 AND account=?2 AND project_key=?3 AND board_id=?4 AND issue_id=?5", params![owner.site_url,owner.email,project_key,board_id,issue_id], |row| row.get(0)).optional().map_err(db_error)?;
+    let pinned_detail: Option<String> = tx.query_row("SELECT detail_json FROM changes WHERE site=?1 AND account=?2 AND project_key=?3 AND board_id=?4 AND issue_id=?5 AND state NOT IN ('confirmed','discarded') ORDER BY sequence DESC LIMIT 1", params![owner.site_url,owner.email,project_key,board_id,issue_id], |row| row.get(0)).optional().map_err(db_error)?;
+    let detail = board_detail
+        .or(pinned_detail)
+        .as_deref()
+        .map(serde_json::from_str::<IssueDetail>)
+        .transpose()
+        .map_err(db_error)?;
     let field = match &request {
         super::model::ChangeRequest::Status { .. } => "status",
         super::model::ChangeRequest::Assignee { .. } => "assignee",
+        super::model::ChangeRequest::Summary { .. } => "summary",
+        super::model::ChangeRequest::Description { .. } => "description",
+        super::model::ChangeRequest::Sprint { .. } => "sprint",
     };
     let existing:Option<(i64,String,String,String,String,Option<String>,i64,String)>=tx.query_row("SELECT id,base_json,requested_json,field,state,transition_id,attempted,detail_json FROM changes WHERE site=?1 AND account=?2 AND issue_id=?3 AND field=?4 AND state NOT IN ('confirmed','discarded') ORDER BY sequence DESC LIMIT 1",params![owner.site_url,owner.email,issue_id,field],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?))).optional().map_err(db_error)?;
-    let base = if field == "status" {
-        super::model::FieldValue {
+    let base = match field {
+        "status" => super::model::FieldValue {
             id: Some(status.id.clone()),
             label: status.name.clone(),
-        }
-    } else {
-        super::model::FieldValue {
+            value: None,
+        },
+        "assignee" => super::model::FieldValue {
             id: assignee.as_ref().map(|value| value.id.clone()),
             label: assignee
                 .as_ref()
                 .map(|value| value.display_name.clone())
                 .unwrap_or_else(|| "Unassigned".into()),
-        }
-    };
-    let (requested, target, transition_id, source_status_id) = match request {
-        super::model::ChangeRequest::Status { transition_id } => {
-            let mut transitions: Vec<super::model::CapabilityTransition> = vec![];
-            let mut stmt=tx.prepare("SELECT transitions_json FROM capabilities WHERE site=?1 AND account=?2 AND issue_id=?3 AND source_status_id=?4").map_err(db_error)?;
-            let rows = stmt
-                .query_map(
-                    params![owner.site_url, owner.email, issue_id, status.id],
-                    |row| row.get::<_, String>(0),
-                )
-                .map_err(db_error)?;
-            for row in rows {
-                transitions.extend(
-                    serde_json::from_str::<Vec<super::model::CapabilityTransition>>(
-                        &row.map_err(db_error)?,
-                    )
-                    .map_err(db_error)?,
-                );
+            value: None,
+        },
+        "summary" => super::model::FieldValue {
+            id: None,
+            label: summary.clone(),
+            value: Some(Value::String(summary.clone())),
+        },
+        "description" => {
+            let value = canonical_detail
+                .as_deref()
+                .map(serde_json::from_str::<IssueDetail>)
+                .transpose()
+                .map_err(db_error)?
+                .and_then(|detail| detail.fields.get("description").cloned())
+                .unwrap_or(Value::Null);
+            super::model::FieldValue {
+                id: None,
+                label: "Description".into(),
+                value: Some(value),
             }
-            let transition = transitions
-                .into_iter()
-                .find(|value| value.id == transition_id && value.supported)
-                .ok_or(AppError::InvalidChange)?;
-            (
-                super::model::FieldValue {
-                    id: Some(transition.target.id.clone()),
-                    label: transition.target.name.clone(),
-                },
-                Some(serde_json::to_string(&transition.target).map_err(db_error)?),
-                Some(transition.id),
-                Some(status.id.clone()),
-            )
         }
-        super::model::ChangeRequest::Assignee { account_id } => {
-            let mut stmt=tx.prepare("SELECT assignees_json,can_assign FROM capabilities WHERE site=?1 AND account=?2 AND issue_id=?3 AND source_status_id=?4").map_err(db_error)?;
-            let rows = stmt
-                .query_map(
-                    params![owner.site_url, owner.email, issue_id, status.id],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        "sprint" => {
+            let issue = detail.as_ref().ok_or(AppError::NotConnected)?.issue.clone();
+            super::model::FieldValue {
+                id: None,
+                label: issue
+                    .sprint_ids
+                    .iter()
+                    .map(i64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                value: Some(serde_json::json!({"sprintIds": issue.sprint_ids})),
+            }
+        }
+        _ => return Err(AppError::InvalidChange),
+    };
+    let (requested, target, transition_id, source_status_id, source_sprint_id, target_sprint_id) =
+        match request {
+            super::model::ChangeRequest::Status { transition_id } => {
+                let mut transitions: Vec<super::model::CapabilityTransition> = vec![];
+                let mut stmt=tx.prepare("SELECT transitions_json FROM capabilities WHERE site=?1 AND account=?2 AND issue_id=?3 AND source_status_id=?4").map_err(db_error)?;
+                let rows = stmt
+                    .query_map(
+                        params![owner.site_url, owner.email, issue_id, status.id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .map_err(db_error)?;
+                for row in rows {
+                    transitions.extend(
+                        serde_json::from_str::<Vec<super::model::CapabilityTransition>>(
+                            &row.map_err(db_error)?,
+                        )
+                        .map_err(db_error)?,
+                    );
+                }
+                let transition = transitions
+                    .into_iter()
+                    .find(|value| value.id == transition_id && value.supported)
+                    .ok_or(AppError::InvalidChange)?;
+                (
+                    super::model::FieldValue {
+                        id: Some(transition.target.id.clone()),
+                        label: transition.target.name.clone(),
+                        value: None,
+                    },
+                    Some(serde_json::to_string(&transition.target).map_err(db_error)?),
+                    Some(transition.id),
+                    Some(status.id.clone()),
+                    None,
+                    None,
                 )
-                .map_err(db_error)?;
-            let mut found = None;
-            for row in rows {
-                let (json, can_assign) = row.map_err(db_error)?;
-                if can_assign != 0 {
-                    let users: Vec<super::model::Assignee> =
-                        serde_json::from_str(&json).map_err(db_error)?;
-                    if let Some(user) = users.into_iter().find(|user| user.id == account_id) {
-                        found = Some(user);
-                        break;
+            }
+            super::model::ChangeRequest::Assignee { account_id } => {
+                let mut stmt=tx.prepare("SELECT assignees_json,can_assign FROM capabilities WHERE site=?1 AND account=?2 AND issue_id=?3 AND source_status_id=?4").map_err(db_error)?;
+                let rows = stmt
+                    .query_map(
+                        params![owner.site_url, owner.email, issue_id, status.id],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+                    )
+                    .map_err(db_error)?;
+                let mut found = None;
+                let mut can_unassign = false;
+                for row in rows {
+                    let (json, can_assign) = row.map_err(db_error)?;
+                    if account_id.is_none() {
+                        let allowed: bool = tx.query_row("SELECT can_unassign FROM capabilities WHERE site=?1 AND account=?2 AND issue_id=?3 AND source_status_id=?4 AND assignee_query=?5", params![owner.site_url, owner.email, issue_id, status.id, ""], |row| Ok(row.get::<_,i64>(0)? != 0)).optional().map_err(db_error)?.unwrap_or(false);
+                        can_unassign = allowed;
+                    } else if can_assign != 0 {
+                        let users: Vec<super::model::Assignee> =
+                            serde_json::from_str(&json).map_err(db_error)?;
+                        if let Some(user) = users
+                            .into_iter()
+                            .find(|user| Some(user.id.as_str()) == account_id.as_deref())
+                        {
+                            found = Some(user);
+                            break;
+                        }
                     }
                 }
+                let requested_value = if let Some(user) = found {
+                    super::model::FieldValue {
+                        id: Some(user.id),
+                        label: user.display_name,
+                        value: None,
+                    }
+                } else if account_id.is_none() && can_unassign {
+                    super::model::FieldValue {
+                        id: None,
+                        label: "Unassigned".into(),
+                        value: None,
+                    }
+                } else {
+                    return Err(AppError::InvalidChange);
+                };
+                (
+                    requested_value,
+                    None,
+                    None,
+                    Some(status.id.clone()),
+                    None,
+                    None,
+                )
             }
-            let user = found.ok_or(AppError::InvalidChange)?;
-            (
-                super::model::FieldValue {
-                    id: Some(user.id),
-                    label: user.display_name,
-                },
-                None,
-                None,
-                Some(status.id.clone()),
-            )
-        }
-    };
-    let same_as_base = requested.id == base.id;
+            super::model::ChangeRequest::Summary {
+                summary: requested_summary,
+            } => {
+                if requested_summary.trim().is_empty() {
+                    return Err(AppError::InvalidChange);
+                }
+                let allowed: bool = tx.query_row("SELECT can_edit_summary FROM capabilities WHERE site=?1 AND account=?2 AND issue_id=?3 AND source_status_id=?4 AND assignee_query=?5", params![owner.site_url, owner.email, issue_id, status.id, ""], |row| Ok(row.get::<_,i64>(0)? != 0)).optional().map_err(db_error)?.unwrap_or(false);
+                if !allowed {
+                    return Err(AppError::InvalidChange);
+                }
+                (
+                    super::model::FieldValue {
+                        id: None,
+                        label: requested_summary.clone(),
+                        value: Some(Value::String(requested_summary)),
+                    },
+                    None,
+                    None,
+                    Some(status.id.clone()),
+                    None,
+                    None,
+                )
+            }
+            super::model::ChangeRequest::Description { description } => {
+                let allowed: bool = tx.query_row("SELECT can_edit_description FROM capabilities WHERE site=?1 AND account=?2 AND issue_id=?3 AND source_status_id=?4 AND assignee_query=?5", params![owner.site_url, owner.email, issue_id, status.id, ""], |row| Ok(row.get::<_,i64>(0)? != 0)).optional().map_err(db_error)?.unwrap_or(false);
+                if !allowed {
+                    return Err(AppError::InvalidChange);
+                }
+                (
+                    super::model::FieldValue {
+                        id: None,
+                        label: "Description".into(),
+                        value: Some(description),
+                    },
+                    None,
+                    None,
+                    Some(status.id.clone()),
+                    None,
+                    None,
+                )
+            }
+            super::model::ChangeRequest::Sprint {
+                source_sprint_id,
+                target_sprint_id,
+            } => {
+                let detail = detail.as_ref().ok_or(AppError::NotConnected)?;
+                if status.category == "done"
+                    || status.category == "complete"
+                    || !detail.issue.sprint_ids.contains(&source_sprint_id)
+                {
+                    return Err(AppError::InvalidChange);
+                }
+                let sprints_json: String = tx.query_row("SELECT sprints_json FROM workspaces WHERE site=?1 AND account=?2 AND project_key=?3 AND board_id=?4", params![owner.site_url, owner.email, project_key, board_id], |row| row.get(0)).optional().map_err(db_error)?.ok_or(AppError::NotConnected)?;
+                let sprints: Vec<super::model::Sprint> =
+                    serde_json::from_str(&sprints_json).map_err(db_error)?;
+                let states = sprints
+                    .iter()
+                    .map(|sprint| (sprint.id, sprint.state.as_str()))
+                    .collect::<HashMap<_, _>>();
+                let live = detail
+                    .issue
+                    .sprint_ids
+                    .iter()
+                    .filter(|id| {
+                        states
+                            .get(*id)
+                            .is_some_and(|state| *state == "active" || *state == "future")
+                    })
+                    .copied()
+                    .collect::<Vec<_>>();
+                if states.get(&source_sprint_id) != Some(&"active")
+                    || states.get(&target_sprint_id) != Some(&"future")
+                    || live.as_slice() != [source_sprint_id]
+                {
+                    return Err(AppError::InvalidChange);
+                }
+                let source_name = sprints
+                    .iter()
+                    .find(|sprint| sprint.id == source_sprint_id)
+                    .map(|sprint| sprint.name.as_str())
+                    .ok_or(AppError::InvalidChange)?;
+                let target_name = sprints
+                    .iter()
+                    .find(|sprint| sprint.id == target_sprint_id)
+                    .map(|sprint| sprint.name.as_str())
+                    .ok_or(AppError::InvalidChange)?;
+                let value = serde_json::json!({"sourceSprintId":source_sprint_id,"targetSprintId":target_sprint_id});
+                (
+                    super::model::FieldValue {
+                        id: None,
+                        label: format!("Move from {source_name} to {target_name}"),
+                        value: Some(value),
+                    },
+                    None,
+                    None,
+                    Some(status.id.clone()),
+                    Some(source_sprint_id),
+                    Some(target_sprint_id),
+                )
+            }
+        };
+    let same_as_base = requested.same_value(&base);
     if let Some((id, old_base, _, _, state, _, attempted, _)) = &existing {
         if state != "queued" || *attempted != 0 {
             return Err(AppError::ChangeLocked);
         }
         let original: super::model::FieldValue =
             serde_json::from_str(old_base).map_err(db_error)?;
-        if field == "status" && original.id != base.id {
+        if !original.same_value(&base) {
             return Err(AppError::ChangeLocked);
         }
         if same_as_base {
             tx.execute("UPDATE changes SET state='discarded',updated_at=?4 WHERE id=?1 AND site=?2 AND account=?3",params![id,owner.site_url,owner.email,chrono::Utc::now().to_rfc3339()]).map_err(db_error)?;
             tx.execute("UPDATE canonical_issues SET revision=revision+1 WHERE site=?1 AND account=?2 AND issue_id=?3",params![owner.site_url,owner.email,issue_id]).map_err(db_error)?;
-            clear_pin_if_resolved(&tx, owner, issue_id)?;
             tx.commit().map_err(db_error)?;
             return Ok(None);
         }
-        let detail = canonical_detail
-            .clone()
-            .unwrap_or_else(|| existing.as_ref().unwrap().7.clone());
-        tx.execute("UPDATE changes SET requested_json=?4,target_json=?5,transition_id=?6,source_status_id=?7,project_key=?8,board_id=?9,detail_json=?10,updated_at=?11 WHERE id=?1 AND site=?2 AND account=?3",params![id,owner.site_url,owner.email,serde_json::to_string(&requested).map_err(db_error)?,target,transition_id,source_status_id,project_key,board_id,detail,chrono::Utc::now().to_rfc3339()]).map_err(db_error)?;
+        tx.execute("UPDATE changes SET requested_json=?4,target_json=?5,transition_id=?6,source_status_id=?7,source_sprint_id=?8,target_sprint_id=?9,project_key=?10,board_id=?11,detail_json=?12,updated_at=?13 WHERE id=?1 AND site=?2 AND account=?3",params![id,owner.site_url,owner.email,serde_json::to_string(&requested).map_err(db_error)?,target,transition_id,source_status_id,source_sprint_id,target_sprint_id,project_key,board_id,canonical_detail.clone().unwrap_or_else(|| existing.as_ref().unwrap().7.clone()),chrono::Utc::now().to_rfc3339()]).map_err(db_error)?;
         tx.execute("UPDATE canonical_issues SET revision=revision+1 WHERE site=?1 AND account=?2 AND issue_id=?3",params![owner.site_url,owner.email,issue_id]).map_err(db_error)?;
         let result=tx.query_row("SELECT id,issue_id,issue_key,summary,project_key,board_id,field,state,attempted,base_json,requested_json,remote_json,error,created_at,accepted FROM changes WHERE id=?1",params![id],pending_from_row).map_err(db_error)?;
         tx.commit().map_err(db_error)?;
@@ -844,7 +1167,7 @@ pub(super) fn enqueue(
         )
         .map_err(db_error)?;
     let now = chrono::Utc::now().to_rfc3339();
-    tx.execute("INSERT INTO changes(site,account,issue_id,issue_key,summary,project_key,board_id,field,state,base_json,requested_json,target_json,transition_id,source_status_id,attempted,sequence,created_at,updated_at,detail_json) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'queued',?9,?10,?11,?12,?13,0,?14,?15,?15,?16)",params![owner.site_url,owner.email,issue_id,issue_key,summary,project_key,board_id,field,serde_json::to_string(&base).map_err(db_error)?,serde_json::to_string(&requested).map_err(db_error)?,target,transition_id,source_status_id,sequence,now,pin]).map_err(db_error)?;
+    tx.execute("INSERT INTO changes(site,account,issue_id,issue_key,summary,project_key,board_id,field,state,base_json,requested_json,target_json,transition_id,source_status_id,source_sprint_id,target_sprint_id,attempted,sequence,created_at,updated_at,detail_json) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'queued',?9,?10,?11,?12,?13,?14,?15,0,?16,?17,?17,?18)",params![owner.site_url,owner.email,issue_id,issue_key,summary,project_key,board_id,field,serde_json::to_string(&base).map_err(db_error)?,serde_json::to_string(&requested).map_err(db_error)?,target,transition_id,source_status_id,source_sprint_id,target_sprint_id,sequence,now,pin]).map_err(db_error)?;
     tx.execute("UPDATE canonical_issues SET revision=revision+1 WHERE site=?1 AND account=?2 AND issue_id=?3",params![owner.site_url,owner.email,issue_id]).map_err(db_error)?;
     let id = tx.last_insert_rowid();
     let result=tx.query_row("SELECT id,issue_id,issue_key,summary,project_key,board_id,field,state,attempted,base_json,requested_json,remote_json,error,created_at,accepted FROM changes WHERE id=?1",params![id],pending_from_row).map_err(db_error)?;
@@ -858,7 +1181,7 @@ pub(super) fn load_change(
     owner: &Owner,
     id: i64,
 ) -> Result<Option<super::model::StoredChange>> {
-    let mut stmt=db.prepare("SELECT id,issue_id,issue_key,summary,project_key,board_id,field,state,attempted,base_json,requested_json,remote_json,error,created_at,accepted,transition_id,source_status_id,updated_at FROM changes WHERE site=?1 AND account=?2 AND id=?3").map_err(db_error)?;
+    let mut stmt=db.prepare("SELECT id,issue_id,issue_key,summary,project_key,board_id,field,state,attempted,base_json,requested_json,remote_json,error,created_at,accepted,transition_id,source_status_id,updated_at,source_sprint_id,target_sprint_id FROM changes WHERE site=?1 AND account=?2 AND id=?3").map_err(db_error)?;
     let mut rows = stmt
         .query(params![owner.site_url, owner.email, id])
         .map_err(db_error)?;
@@ -869,6 +1192,8 @@ pub(super) fn load_change(
             source_status_id: row.get(16).map_err(db_error)?,
             accepted: row.get::<_, i64>(14).map_err(db_error)? != 0,
             version: row.get(17).map_err(db_error)?,
+            source_sprint_id: row.get(18).map_err(db_error)?,
+            target_sprint_id: row.get(19).map_err(db_error)?,
         })),
         None => Ok(None),
     }
@@ -884,20 +1209,24 @@ fn bump_revision(db: &Connection, owner: &Owner, issue_id: &str) -> Result<i64> 
     .map_err(db_error)
 }
 
-fn clear_pin_if_resolved(db: &Connection, owner: &Owner, issue_id: &str) -> Result<()> {
-    let pending:i64=db.query_row("SELECT EXISTS(SELECT 1 FROM changes WHERE site=?1 AND account=?2 AND issue_id=?3 AND state NOT IN ('confirmed','discarded'))",params![owner.site_url,owner.email,issue_id],|row|row.get(0)).map_err(db_error)?;
-    if pending == 0 {
-        db.execute("UPDATE canonical_issues SET detail_json=NULL WHERE site=?1 AND account=?2 AND issue_id=?3",params![owner.site_url,owner.email,issue_id]).map_err(db_error)?;
-    }
-    Ok(())
-}
-
 fn apply_remote_to_detail(detail: &mut IssueDetail, remote: &super::model::RemoteFields) {
     detail.issue.id = remote.issue_id.clone();
     detail.issue.key = remote.key.clone();
     detail.issue.status = remote.status.clone();
     detail.issue.assignee = remote.assignee.clone();
     detail.issue.updated = remote.updated.clone();
+    if let Some(summary) = &remote.summary {
+        detail.issue.summary = summary.clone();
+        detail
+            .fields
+            .insert("summary".into(), Value::String(summary.clone()));
+    }
+    if let Some(description) = &remote.description {
+        detail.description = description.clone();
+        detail
+            .fields
+            .insert("description".into(), description.clone());
+    }
     let status_raw = raw_status(detail.fields.get("status"), &remote.status);
     let assignee_raw = raw_assignee(detail.fields.get("assignee"), remote.assignee.as_ref());
     detail.fields.insert("status".into(), status_raw);
@@ -916,7 +1245,7 @@ fn update_remote_tx(
     let old:Option<(String,String,String,Option<String>,String,i64,Option<String>)>=db.query_row("SELECT issue_key,summary,status_json,assignee_json,updated,revision,detail_json FROM canonical_issues WHERE site=?1 AND account=?2 AND issue_id=?3",params![owner.site_url,owner.email,remote.issue_id],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?))).optional().map_err(db_error)?;
     let status_json = serde_json::to_string(&remote.status).map_err(db_error)?;
     let assignee_json = serde_json::to_string(&remote.assignee).map_err(db_error)?;
-    let (summary, revision, old_status, detail_json) = if let Some((
+    let (old_summary, revision, old_status, detail_json) = if let Some((
         _,
         summary,
         old_status,
@@ -939,6 +1268,7 @@ fn update_remote_tx(
     } else {
         (String::new(), 0, String::new(), None)
     };
+    let summary = remote.summary.as_deref().unwrap_or(&old_summary);
     let mut detail = detail_json
         .as_deref()
         .and_then(|json| serde_json::from_str::<IssueDetail>(json).ok());
@@ -950,7 +1280,7 @@ fn update_remote_tx(
         .map(serde_json::to_string)
         .transpose()
         .map_err(db_error)?;
-    db.execute("INSERT INTO canonical_issues(site,account,issue_id,issue_key,summary,status_json,assignee_json,updated,revision,uncertain,detail_json) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,0,?10) ON CONFLICT(site,account,issue_id) DO UPDATE SET issue_key=excluded.issue_key,status_json=excluded.status_json,assignee_json=excluded.assignee_json,updated=excluded.updated,uncertain=0,detail_json=COALESCE(excluded.detail_json,canonical_issues.detail_json)",params![owner.site_url,owner.email,remote.issue_id,remote.key,summary,status_json,assignee_json,remote.updated,revision,detail_json]).map_err(db_error)?;
+    db.execute("INSERT INTO canonical_issues(site,account,issue_id,issue_key,summary,status_json,assignee_json,updated,revision,uncertain,detail_json) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,0,?10) ON CONFLICT(site,account,issue_id) DO UPDATE SET issue_key=excluded.issue_key,summary=excluded.summary,status_json=excluded.status_json,assignee_json=excluded.assignee_json,updated=excluded.updated,uncertain=0,detail_json=COALESCE(excluded.detail_json,canonical_issues.detail_json)",params![owner.site_url,owner.email,remote.issue_id,remote.key,summary,status_json,assignee_json,remote.updated,revision,detail_json]).map_err(db_error)?;
     let mut stmt=db.prepare("SELECT id,detail_json FROM changes WHERE site=?1 AND account=?2 AND issue_id=?3 AND state NOT IN ('confirmed','discarded')").map_err(db_error)?;
     let rows = stmt
         .query_map(
@@ -1051,12 +1381,7 @@ pub(super) fn finish_change(
     if remote.issue_id != stored.change.issue_id {
         return Err(AppError::InvalidChange);
     }
-    if !discard
-        && remote
-            .field_value(&stored.change.field)
-            .and_then(|value| value.id)
-            != stored.change.requested.id
-    {
+    if !discard && !remote.matches_requested(&stored.change.field, &stored.change.requested) {
         return Err(AppError::InvalidChange);
     }
     let tx = db
@@ -1067,11 +1392,73 @@ pub(super) fn finish_change(
         return Ok(false);
     }
     update_remote_tx(&tx, owner, remote, false)?;
+    if !discard && stored.change.field == "sprint" {
+        apply_sprint_move(&tx, owner, stored, remote)?;
+    }
     tx.execute("UPDATE changes SET state=?4,error=NULL,remote_json=?5,updated_at=?6 WHERE id=?1 AND site=?2 AND account=?3",params![stored.change.id,owner.site_url,owner.email,if discard{"discarded"}else{"confirmed"},serde_json::to_string(&stored.change.requested).map_err(db_error)?,chrono::Utc::now().to_rfc3339()]).map_err(db_error)?;
-    clear_pin_if_resolved(&tx, owner, &stored.change.issue_id)?;
     bump_revision(&tx, owner, &stored.change.issue_id)?;
     tx.commit().map_err(db_error)?;
     Ok(true)
+}
+
+fn apply_sprint_move(
+    db: &Connection,
+    owner: &Owner,
+    stored: &super::model::StoredChange,
+    remote: &super::model::RemoteFields,
+) -> Result<()> {
+    let (Some(source), Some(target)) = (stored.source_sprint_id, stored.target_sprint_id) else {
+        return Err(AppError::InvalidChange);
+    };
+    let copies: Vec<(String, i64, String, String)> = {
+        let mut stmt = db.prepare("SELECT project_key,board_id,summary_json,detail_json FROM issues WHERE site=?1 AND account=?2 AND issue_id=?3").map_err(db_error)?;
+        let rows = stmt
+            .query_map(
+                params![owner.site_url, owner.email, stored.change.issue_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .map_err(db_error)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(db_error)?
+    };
+    let mut target_boards = Vec::new();
+    for (project, board, summary_json, detail_json) in copies {
+        let mut summary: IssueSummary = serde_json::from_str(&summary_json).map_err(db_error)?;
+        let mut detail: IssueDetail = serde_json::from_str(&detail_json).map_err(db_error)?;
+        apply_remote_to_detail(&mut detail, remote);
+        if project == stored.change.project_key && board == stored.change.board_id {
+            summary.sprint_ids = remote.sprint_ids.clone();
+            detail.issue.sprint_ids = remote.sprint_ids.clone();
+            target_boards.push((project.clone(), board));
+        } else {
+            summary.sprint_ids.retain(|id| *id != source);
+            detail.issue.sprint_ids.retain(|id| *id != source);
+            let sprints_json: Option<String> = db.query_row("SELECT sprints_json FROM workspaces WHERE site=?1 AND account=?2 AND project_key=?3 AND board_id=?4", params![owner.site_url,owner.email,project,board], |row| row.get(0)).optional().map_err(db_error)?;
+            let target_known = sprints_json
+                .and_then(|json| serde_json::from_str::<Vec<super::model::Sprint>>(&json).ok())
+                .is_some_and(|sprints| sprints.iter().any(|sprint| sprint.id == target));
+            if target_known {
+                if !summary.sprint_ids.contains(&target) {
+                    summary.sprint_ids.push(target);
+                }
+                if !detail.issue.sprint_ids.contains(&target) {
+                    detail.issue.sprint_ids.push(target);
+                }
+                target_boards.push((project.clone(), board));
+            }
+        }
+        db.execute("UPDATE issues SET summary_json=?6,detail_json=?7 WHERE site=?1 AND account=?2 AND project_key=?3 AND board_id=?4 AND issue_id=?5", params![owner.site_url,owner.email,project,board,stored.change.issue_id,serde_json::to_string(&summary).map_err(db_error)?,serde_json::to_string(&detail).map_err(db_error)?]).map_err(db_error)?;
+    }
+    db.execute("DELETE FROM memberships WHERE site=?1 AND account=?2 AND issue_id=?3 AND view='current' AND sprint_id=?4", params![owner.site_url,owner.email,stored.change.issue_id,source]).map_err(db_error)?;
+    db.execute("DELETE FROM memberships WHERE site=?1 AND account=?2 AND issue_id=?3 AND view='future' AND sprint_id=?4", params![owner.site_url,owner.email,stored.change.issue_id,target]).map_err(db_error)?;
+    db.execute("DELETE FROM memberships WHERE site=?1 AND account=?2 AND issue_id=?3 AND view='current' AND sprint_id=0 AND NOT EXISTS(SELECT 1 FROM memberships current_member WHERE current_member.site=memberships.site AND current_member.account=memberships.account AND current_member.project_key=memberships.project_key AND current_member.board_id=memberships.board_id AND current_member.issue_id=memberships.issue_id AND current_member.view='current' AND current_member.sprint_id<>0)", params![owner.site_url,owner.email,stored.change.issue_id]).map_err(db_error)?;
+    target_boards.sort();
+    target_boards.dedup();
+    for (project, board) in target_boards {
+        let rank: i64 = db.query_row("SELECT COALESCE(MAX(rank),-1)+1 FROM memberships WHERE site=?1 AND account=?2 AND project_key=?3 AND board_id=?4 AND view='future' AND sprint_id=?5", params![owner.site_url,owner.email,project,board,target], |row| row.get(0)).map_err(db_error)?;
+        db.execute("INSERT INTO memberships(site,account,project_key,board_id,view,sprint_id,issue_id,rank) VALUES(?1,?2,?3,?4,'future',?5,?6,?7)", params![owner.site_url,owner.email,project,board,target,stored.change.issue_id,rank]).map_err(db_error)?;
+    }
+    Ok(())
 }
 
 pub(super) fn discard_local(
@@ -1103,7 +1490,6 @@ pub(super) fn discard_local(
     )
     .map_err(db_error)?;
     bump_revision(&tx, owner, &stored.change.issue_id)?;
-    clear_pin_if_resolved(&tx, owner, &stored.change.issue_id)?;
     tx.commit().map_err(db_error)?;
     Ok(true)
 }
@@ -1120,7 +1506,7 @@ pub(super) fn rebase_change(
     let field_value = remote
         .field_value(&stored.change.field)
         .ok_or(AppError::InvalidChange)?;
-    if field_value.id == stored.change.requested.id {
+    if remote.matches_requested(&stored.change.field, &stored.change.requested) {
         return Err(AppError::InvalidChange);
     }
     let tx = db
@@ -1308,6 +1694,10 @@ mod tests {
             source_status_id: "42".into(),
             transitions_captured_at: Some("captured".into()),
             assignees_captured_at: Some("captured".into()),
+            can_unassign: true,
+            can_edit_summary: true,
+            can_edit_description: true,
+            edit_capabilities_at: Some("captured".into()),
             transitions: vec![
                 super::super::model::CapabilityTransition {
                     id: "to-progress".into(),
@@ -1450,14 +1840,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cache.sqlite3");
         let db = open(&path).unwrap();
-        db.execute_batch("PRAGMA user_version=3").unwrap();
+        db.execute_batch("PRAGMA user_version=4").unwrap();
         drop(db);
         assert!(matches!(open(&path), Err(AppError::CacheVersion)));
         let db = Connection::open(&path).unwrap();
         let version: i64 = db
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
     }
 
     #[test]
@@ -1480,7 +1870,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         for thread in threads {
-            assert_eq!(thread.join().unwrap().unwrap(), 2);
+            assert_eq!(thread.join().unwrap().unwrap(), 3);
         }
     }
 
@@ -1603,8 +1993,185 @@ mod tests {
         let assignee: super::super::model::ChangeRequest =
             serde_json::from_value(json!({"field":"assignee","accountId":"account-9"})).unwrap();
         assert!(
-            matches!(assignee,super::super::model::ChangeRequest::Assignee{account_id} if account_id=="account-9")
+            matches!(assignee,super::super::model::ChangeRequest::Assignee{account_id} if account_id.as_deref()==Some("account-9"))
         );
+        let explicit_null: super::super::model::FieldValue =
+            serde_json::from_str(r#"{"id":null,"label":"Description","value":null}"#).unwrap();
+        assert_eq!(explicit_null.value, Some(Value::Null));
+        let omitted: super::super::model::FieldValue =
+            serde_json::from_str(r#"{"id":null,"label":"Assignee"}"#).unwrap();
+        assert_eq!(omitted.value, None);
+    }
+
+    #[test]
+    fn pending_sprint_move_projects_membership_before_count_and_pagination() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache.sqlite3");
+        let mut db = open(&path).unwrap();
+        let owner = owner("yi@example.com");
+        let mut data = snapshot();
+        data.issues[0].summary.status.category = "indeterminate".into();
+        data.issues[0].detail.fields.insert(
+            "status".into(),
+            json!({"id":"42","name":"In Progress","statusCategory":{"key":"indeterminate"}}),
+        );
+        data.workspace.sprints.push(Sprint {
+            id: 12,
+            name: "Next".into(),
+            state: "future".into(),
+            start_date: None,
+            end_date: None,
+            goal: None,
+        });
+        data.workspace.issue_count = 150;
+        data.issues.clear();
+        data.memberships.clear();
+        for rank in 0..150 {
+            let mut issue = snapshot().issues.remove(0);
+            issue.summary.id = (rank + 1).to_string();
+            issue.summary.key = format!("CK-{}", rank + 1);
+            issue.summary.status.category = "indeterminate".into();
+            issue.detail.issue = issue.summary.clone();
+            issue.rank = rank as i64;
+            let id = issue.summary.id.clone();
+            data.memberships.push(Membership {
+                view: "current",
+                sprint_id: 11,
+                issue_id: id,
+                rank: rank as i64,
+            });
+            data.issues.push(issue);
+        }
+        publish(&mut db, &owner, &data).unwrap();
+        let mut other_board = snapshot();
+        other_board.workspace.reference.board_id = 8;
+        other_board.workspace.reference.board_name = "Other".into();
+        other_board.workspace.sprints.push(Sprint {
+            id: 12,
+            name: "Next".into(),
+            state: "future".into(),
+            start_date: None,
+            end_date: None,
+            goal: None,
+        });
+        other_board.issues[0].summary.status.category = "indeterminate".into();
+        other_board.issues[0].detail.issue.status.category = "indeterminate".into();
+        publish(&mut db, &owner, &other_board).unwrap();
+        let pending = enqueue(
+            &mut db,
+            &owner,
+            "CK",
+            7,
+            "1",
+            super::super::model::ChangeRequest::Sprint {
+                source_sprint_id: 11,
+                target_sprint_id: 12,
+            },
+        )
+        .unwrap()
+        .unwrap();
+        let query = |view: &str, sprint_id: i64, offset: i64| IssueFilter {
+            project_key: "CK".into(),
+            board_id: 7,
+            view: view.into(),
+            sprint_id: Some(sprint_id),
+            search: String::new(),
+            offset,
+            limit: 100,
+        };
+        let current = issues(&db, &owner, &query("current", 11, 0)).unwrap();
+        assert_eq!(current.total, 149);
+        assert_eq!(current.issues.len(), 100);
+        let future = issues(&db, &owner, &query("future", 12, 0)).unwrap();
+        assert_eq!(future.total, 1);
+        assert_eq!(future.issues[0].id, "1");
+        let other_current = issues(
+            &db,
+            &owner,
+            &IssueFilter {
+                project_key: "CK".into(),
+                board_id: 8,
+                view: "current".into(),
+                sprint_id: Some(11),
+                search: String::new(),
+                offset: 0,
+                limit: 100,
+            },
+        )
+        .unwrap();
+        let other_future = issues(
+            &db,
+            &owner,
+            &IssueFilter {
+                project_key: "CK".into(),
+                board_id: 8,
+                view: "future".into(),
+                sprint_id: Some(12),
+                search: String::new(),
+                offset: 0,
+                limit: 100,
+            },
+        )
+        .unwrap();
+        assert_eq!(other_current.total, 0);
+        assert_eq!(
+            other_future.total, 0,
+            "do not invent the target sprint on another board"
+        );
+        let projected = issue(&db, &owner, "CK", 8, "1").unwrap().unwrap();
+        assert!(!projected.issue.sprint_ids.contains(&11));
+        assert!(!projected.issue.sprint_ids.contains(&12));
+        let queued = load_change(&db, &owner, pending.id).unwrap().unwrap();
+        assert!(set_change_state(&mut db, &owner, &queued, "sending", None, None, true).unwrap());
+        let sending = load_change(&db, &owner, pending.id).unwrap().unwrap();
+        assert!(
+            set_change_state(&mut db, &owner, &sending, "confirming", None, None, true).unwrap()
+        );
+        let confirming = load_change(&db, &owner, pending.id).unwrap().unwrap();
+        let remote = super::super::model::RemoteFields {
+            issue_id: "1".into(),
+            key: "CK-1".into(),
+            project_key: "CK".into(),
+            status: IssueStatus {
+                id: "42".into(),
+                name: "In Progress".into(),
+                category: "indeterminate".into(),
+            },
+            assignee: Some(Assignee {
+                id: "abc".into(),
+                display_name: "Yi".into(),
+            }),
+            summary: Some("Finished in current sprint".into()),
+            description: Some(json!({"type":"doc","version":1,"content":[]})),
+            sprint_ids: vec![12, 9],
+            open_sprint_ids: vec![12],
+            updated: "2026-09-28T10:00:00Z".into(),
+        };
+        finish_change(&mut db, &owner, &confirming, &remote, false).unwrap();
+        assert_eq!(
+            issues(
+                &db,
+                &owner,
+                &IssueFilter {
+                    project_key: "CK".into(),
+                    board_id: 8,
+                    view: "future".into(),
+                    sprint_id: Some(12),
+                    search: String::new(),
+                    offset: 0,
+                    limit: 100
+                }
+            )
+            .unwrap()
+            .total,
+            1
+        );
+        assert!(!issue(&db, &owner, "CK", 8, "1")
+            .unwrap()
+            .unwrap()
+            .issue
+            .sprint_ids
+            .contains(&11));
     }
 
     #[test]
@@ -1687,7 +2254,7 @@ mod tests {
             8,
             "1",
             super::super::model::ChangeRequest::Assignee {
-                account_id: "u2".into(),
+                account_id: Some("u2".into()),
             },
         )
         .unwrap()
@@ -1733,6 +2300,10 @@ mod tests {
                 id: "u2".into(),
                 display_name: "Renamed teammate".into(),
             }),
+            summary: Some("Finished in current sprint".into()),
+            description: Some(Value::Null),
+            sprint_ids: vec![11],
+            open_sprint_ids: vec![],
             updated: "2026-09-03T10:00:00.000+0000".into(),
         };
         assert!(finish_change(&mut db, &owner, &confirming, &remote, false).unwrap());
@@ -1782,6 +2353,10 @@ mod tests {
                 id: "u2".into(),
                 display_name: "Renamed teammate".into(),
             }),
+            summary: Some("Finished in current sprint".into()),
+            description: Some(Value::Null),
+            sprint_ids: vec![11],
+            open_sprint_ids: vec![],
             updated: "2026-09-04T10:00:00.000+0000".into(),
         };
         assert!(finish_change(&mut db, &owner, &confirming, &renamed_status, false).unwrap());
@@ -1887,6 +2462,10 @@ mod tests {
             project_key: "CK".into(),
             status: snapshot().issues[0].summary.status.clone(),
             assignee: snapshot().issues[0].summary.assignee.clone(),
+            summary: Some("Finished in current sprint".into()),
+            description: Some(Value::Null),
+            sprint_ids: vec![11],
+            open_sprint_ids: vec![],
             updated: "2026-09-02T10:00:00.000+0000".into(),
         };
         assert!(matches!(
@@ -1932,6 +2511,7 @@ mod tests {
             Some(&super::super::model::FieldValue {
                 id: Some("42".into()),
                 label: "Done".into(),
+                value: None,
             }),
             true,
         )
@@ -1944,6 +2524,10 @@ mod tests {
             project_key: "CK".into(),
             status: snapshot().issues[0].summary.status.clone(),
             assignee: snapshot().issues[0].summary.assignee.clone(),
+            summary: Some("Finished in current sprint".into()),
+            description: Some(Value::Null),
+            sprint_ids: vec![11],
+            open_sprint_ids: vec![],
             updated: "2026-09-02T10:00:00.000+0000".into(),
         };
         // The coordinator performs fresh transition/permission validation before Keep mine.

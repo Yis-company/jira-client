@@ -65,6 +65,18 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("persistent sync changes", () => {
+  it("shows the actual description text when resolving a conflict", async () => {
+    const doc = (text: string) => ({ type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
+    mount([change("conflict", {
+      field: "description",
+      base: { id: null, label: "Description", value: doc("Original text") },
+      requested: { id: null, label: "Description", value: doc("My revision") },
+      remote: { id: null, label: "Description", value: doc("Teammate revision") },
+    })]);
+    expect(await screen.findByText("Original text")).toBeInTheDocument();
+    expect(screen.getByText("My revision")).toBeInTheDocument();
+    expect(screen.getByText("Teammate revision")).toBeInTheDocument();
+  });
   it("opens pinned issue context from the owner-wide queue", async () => {
     const openIssue = vi.fn();
     mount([change("queued")], openIssue);

@@ -3,7 +3,8 @@ use serde_json::{json, Value};
 use super::{
     jira::{Api, HttpApi, WriteFailure},
     model::{
-        Assignee, CapabilityTransition, IssueCapabilities, IssueStatus, RemoteFields, StoredChange,
+        Assignee, CapabilityTransition, IssueCapabilities, IssueStatus, RemoteFields, Sprint,
+        StoredChange,
     },
 };
 use crate::{AppError, Result};
@@ -33,6 +34,48 @@ impl WriteApi for HttpApi<'_> {
                 )
                 .await
             }
+            "summary" => {
+                let value = record.change.requested.value.clone().ok_or_else(|| {
+                    WriteFailure::Rejected {
+                        status: 400,
+                        message: "Missing title value.".into(),
+                    }
+                })?;
+                self.write(
+                    &path,
+                    reqwest::Method::PUT,
+                    json!({"fields":{"summary":value}}),
+                )
+                .await
+            }
+            "description" => {
+                let value = record.change.requested.value.clone().ok_or_else(|| {
+                    WriteFailure::Rejected {
+                        status: 400,
+                        message: "Missing description value.".into(),
+                    }
+                })?;
+                self.write(
+                    &path,
+                    reqwest::Method::PUT,
+                    json!({"fields":{"description":value}}),
+                )
+                .await
+            }
+            "sprint" => {
+                let Some(target) = record.target_sprint_id else {
+                    return Err(WriteFailure::Rejected {
+                        status: 400,
+                        message: "Missing destination sprint.".into(),
+                    });
+                };
+                self.write(
+                    &format!("/rest/agile/1.0/sprint/{target}/issue"),
+                    reqwest::Method::POST,
+                    json!({"issues":[record.change.issue_key]}),
+                )
+                .await
+            }
             _ => Err(WriteFailure::Rejected {
                 status: 400,
                 message: "Unsupported field.".into(),
@@ -49,10 +92,21 @@ fn text<'a>(value: &'a Value, pointer: &str) -> Result<&'a str> {
 }
 
 pub(super) async fn remote_issue<A: Api>(api: &A, issue_id: &str) -> Result<RemoteFields> {
+    remote_issue_with_sprints(api, issue_id, false).await
+}
+
+pub(super) async fn remote_issue_with_sprints<A: Api>(
+    api: &A,
+    issue_id: &str,
+    include_sprints: bool,
+) -> Result<RemoteFields> {
     let raw = api
         .get(
             &format!("/rest/api/3/issue/{issue_id}"),
-            &[("fields", "status,assignee,updated,project".into())],
+            &[(
+                "fields",
+                "status,assignee,summary,description,updated,project".into(),
+            )],
         )
         .await?;
     let id = text(&raw, "/id")?;
@@ -67,12 +121,57 @@ pub(super) async fn remote_issue<A: Api>(api: &A, issue_id: &str) -> Result<Remo
         }),
         None => return Err(AppError::Metadata),
     };
+    let mut sprint_ids = Vec::new();
+    let mut open_sprint_ids = Vec::new();
+    if include_sprints {
+        let agile = api
+            .get(&format!("/rest/agile/1.0/issue/{issue_id}"), &[])
+            .await?;
+        if text(&agile, "/id")? != issue_id || text(&agile, "/key")? != text(&raw, "/key")? {
+            return Err(AppError::Scope);
+        }
+        let agile_fields = agile
+            .get("fields")
+            .and_then(Value::as_object)
+            .ok_or(AppError::Metadata)?;
+        let current_sprint = agile_fields.get("sprint").ok_or(AppError::Metadata)?;
+        if !current_sprint.is_null() {
+            let id = current_sprint
+                .get("id")
+                .and_then(Value::as_i64)
+                .ok_or(AppError::Metadata)?;
+            sprint_ids.push(id);
+            open_sprint_ids.push(id);
+        }
+        let closed_sprints = agile_fields
+            .get("closedSprints")
+            .and_then(Value::as_array)
+            .ok_or(AppError::Metadata)?;
+        for sprint in closed_sprints {
+            let id = sprint
+                .get("id")
+                .and_then(Value::as_i64)
+                .ok_or(AppError::Metadata)?;
+            if !sprint_ids.contains(&id) {
+                sprint_ids.push(id);
+            }
+        }
+    }
+    let summary = text(&raw, "/fields/summary")?.to_owned();
+    let description = raw
+        .pointer("/fields/description")
+        .cloned()
+        .ok_or(AppError::Metadata)?;
     Ok(RemoteFields {
         issue_id: id.into(),
         key: text(&raw, "/key")?.into(),
         project_key: text(&raw, "/fields/project/key")?.into(),
         status: parse_status(raw.pointer("/fields/status").ok_or(AppError::Metadata)?)?,
         assignee,
+        summary: Some(summary),
+        description: Some(description),
+        sprint_ids,
+        open_sprint_ids,
         updated: text(&raw, "/fields/updated")?.into(),
     })
 }
@@ -124,6 +223,32 @@ async fn can_assign<A: Api>(api: &A, issue_id: &str) -> Result<bool> {
         .ok_or(AppError::Metadata)
 }
 
+async fn edit_fields<A: Api>(api: &A, issue_id: &str) -> Result<Value> {
+    match api
+        .get(&format!("/rest/api/3/issue/{issue_id}/editmeta"), &[])
+        .await
+    {
+        Ok(value) => Ok(value
+            .get("fields")
+            .cloned()
+            .filter(Value::is_object)
+            .ok_or(AppError::Metadata)?),
+        Err(AppError::Forbidden) => Ok(Value::Object(Default::default())),
+        Err(error) => Err(error),
+    }
+}
+
+fn can_unassign(edit_fields: &Value) -> bool {
+    let Some(field) = edit_fields.get("assignee") else {
+        return false;
+    };
+    field.get("required").and_then(Value::as_bool) == Some(false)
+        && field
+            .get("operations")
+            .and_then(Value::as_array)
+            .is_some_and(|values| values.iter().any(|value| value.as_str() == Some("set")))
+}
+
 async fn assignees<A: Api>(api: &A, key: &str, filter: (&str, String)) -> Result<Vec<Assignee>> {
     let raw = api
         .get(
@@ -156,12 +281,17 @@ pub(super) async fn capabilities<A: Api>(
 ) -> Result<IssueCapabilities> {
     let transitions = transitions(api, &remote.issue_id).await?;
     let can_assign = can_assign(api, &remote.issue_id).await?;
+    let edit_fields = edit_fields(api, &remote.issue_id).await?;
+    let can_edit_summary = can_set(&edit_fields, "summary");
+    let can_edit_description = can_set(&edit_fields, "description");
+    let can_unassign = can_assign && can_unassign(&edit_fields);
     let assignees = if can_assign {
         assignees(api, &remote.key, ("query", query.into())).await?
     } else {
         vec![]
     };
     let now = chrono::Utc::now().to_rfc3339();
+    let edit_capabilities_at = Some(now.clone());
     Ok(IssueCapabilities {
         source_status_id: remote.status.id.clone(),
         transitions_captured_at: Some(now.clone()),
@@ -169,9 +299,25 @@ pub(super) async fn capabilities<A: Api>(
         transitions,
         assignees,
         can_assign,
+        can_unassign,
+        can_edit_summary,
+        can_edit_description,
+        edit_capabilities_at,
         assignee_query: query.into(),
         assignees_complete: false,
     })
+}
+
+fn can_set(fields: &Value, key: &str) -> bool {
+    fields
+        .get(key)
+        .and_then(|field| field.get("operations"))
+        .and_then(Value::as_array)
+        .is_some_and(|operations| {
+            operations
+                .iter()
+                .any(|operation| operation.as_str() == Some("set"))
+        })
 }
 
 pub(super) async fn validate<A: Api>(
@@ -197,23 +343,126 @@ pub(super) async fn validate<A: Api>(
             }
         }
         "assignee" => {
-            let target = record
-                .change
-                .requested
-                .id
-                .clone()
-                .ok_or(AppError::InvalidChange)?;
+            let target = record.change.requested.id.clone();
             if !can_assign(api, &remote.issue_id).await? {
                 return Err(AppError::Forbidden);
             }
-            let candidates = assignees(api, &remote.key, ("accountId", target.clone())).await?;
-            if candidates.iter().any(|user| user.id == target) {
-                Ok(())
+            if let Some(target) = target {
+                let candidates = assignees(api, &remote.key, ("accountId", target.clone())).await?;
+                if candidates.iter().any(|user| user.id == target) {
+                    Ok(())
+                } else {
+                    Err(AppError::InvalidChange)
+                }
             } else {
-                Err(AppError::InvalidChange)
+                let fields = edit_fields(api, &remote.issue_id).await?;
+                if can_unassign(&fields) {
+                    Ok(())
+                } else {
+                    Err(AppError::Forbidden)
+                }
             }
         }
+        "summary" => {
+            let fields = edit_fields(api, &remote.issue_id).await?;
+            if can_set(&fields, "summary") {
+                Ok(())
+            } else {
+                Err(AppError::Forbidden)
+            }
+        }
+        "description" => {
+            let fields = edit_fields(api, &remote.issue_id).await?;
+            if can_set(&fields, "description") {
+                Ok(())
+            } else {
+                Err(AppError::Forbidden)
+            }
+        }
+        "sprint" => {
+            let source = record.source_sprint_id.ok_or(AppError::InvalidChange)?;
+            let target = record.target_sprint_id.ok_or(AppError::InvalidChange)?;
+            if remote.status.category == "done" || remote.status.category == "complete" {
+                return Err(AppError::InvalidChange);
+            }
+            let board_sprints = board_sprints(api, record.change.board_id).await?;
+            let source_state = board_sprints
+                .iter()
+                .find(|sprint| sprint.id == source)
+                .map(|sprint| sprint.state.as_str());
+            let target_state = board_sprints
+                .iter()
+                .find(|sprint| sprint.id == target)
+                .map(|sprint| sprint.state.as_str());
+            if source_state != Some("active")
+                || target_state != Some("future")
+                || remote.open_sprint_ids.as_slice() != [source]
+            {
+                return Err(AppError::InvalidChange);
+            }
+            Ok(())
+        }
         _ => Err(AppError::InvalidChange),
+    }
+}
+
+async fn board_sprints<A: Api>(api: &A, board_id: i64) -> Result<Vec<Sprint>> {
+    let path = format!("/rest/agile/1.0/board/{board_id}/sprint");
+    let mut start = 0usize;
+    let mut all = Vec::new();
+    loop {
+        let raw = api
+            .get(
+                &path,
+                &[
+                    ("state", "active,future".into()),
+                    ("startAt", start.to_string()),
+                    ("maxResults", "100".into()),
+                ],
+            )
+            .await?;
+        let values = raw
+            .get("values")
+            .and_then(Value::as_array)
+            .ok_or(AppError::Metadata)?;
+        let page_len = values.len();
+        if page_len == 0 && raw.get("isLast").and_then(Value::as_bool) != Some(true) {
+            return Err(AppError::Metadata);
+        }
+        for sprint in values {
+            all.push(Sprint {
+                id: sprint
+                    .get("id")
+                    .and_then(Value::as_i64)
+                    .ok_or(AppError::Metadata)?,
+                name: text(sprint, "/name")?.into(),
+                state: text(sprint, "/state")?.into(),
+                start_date: sprint
+                    .get("startDate")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                end_date: sprint
+                    .get("endDate")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                goal: sprint
+                    .get("goal")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            });
+        }
+        start += page_len;
+        if raw.get("isLast").and_then(Value::as_bool) == Some(true)
+            || raw
+                .get("total")
+                .and_then(Value::as_u64)
+                .is_some_and(|total| start >= total as usize)
+        {
+            return Ok(all);
+        }
+        if page_len < 100 {
+            return Err(AppError::Metadata);
+        }
     }
 }
 
@@ -243,6 +492,21 @@ mod tests {
                     .map(|(k, v)| ((*k).into(), v.clone()))
                     .collect(),
             ));
+            if path.starts_with("/rest/agile/1.0/issue/") {
+                let issue_id = self
+                    .response
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("10");
+                let key = self
+                    .response
+                    .get("key")
+                    .and_then(Value::as_str)
+                    .unwrap_or("CK-10");
+                return Ok(
+                    json!({"id":issue_id,"key":key,"fields":{"sprint":null,"closedSprints":[]}}),
+                );
+            }
             Ok(self.response.clone())
         }
     }
@@ -276,7 +540,7 @@ mod tests {
     #[tokio::test]
     async fn direct_read_uses_raw_jira_ids_and_explicit_fields() {
         let api = Fixture::new(json!({"id":"10","key":"CK-10","fields":{
-            "project":{"key":"CK"},"updated":"2026-09-27T10:00:00Z",
+            "project":{"key":"CK"},"updated":"2026-09-27T10:00:00Z","summary":"Title","description":null,
             "status":{"id":"1","name":"Ready","statusCategory":{"key":"new"}},
             "assignee":{"accountId":"account-1","displayName":"Yi"}
         }}));
@@ -285,7 +549,10 @@ mod tests {
         assert_eq!(remote.status.category, "new");
         assert_eq!(
             api.calls.lock().unwrap()[0].1,
-            vec![("fields".into(), "status,assignee,updated,project".into())]
+            vec![(
+                "fields".into(),
+                "status,assignee,summary,description,updated,project".into()
+            )]
         );
         assert!(matches!(
             remote_issue(&api, "11").await,
@@ -307,5 +574,19 @@ mod tests {
         let calls = api.calls.lock().unwrap();
         assert!(calls[0].1.contains(&("issueKey".into(), "CK-10".into())));
         assert!(calls[0].1.contains(&("accountId".into(), "active".into())));
+    }
+
+    #[test]
+    fn unassignment_requires_editmeta_to_allow_optional_assignee() {
+        assert!(can_unassign(
+            &json!({"assignee":{"required":false,"operations":["set"]}})
+        ));
+        assert!(!can_unassign(
+            &json!({"assignee":{"required":true,"operations":["set"]}})
+        ));
+        assert!(!can_unassign(
+            &json!({"assignee":{"required":false,"operations":["add"]}})
+        ));
+        assert!(!can_unassign(&json!({})));
     }
 }
