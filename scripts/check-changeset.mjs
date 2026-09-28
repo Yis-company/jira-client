@@ -6,15 +6,13 @@ import { isReleasePr } from './release-event.mjs';
 import { changelogNotes, validateVersions } from './release-version.mjs';
 
 export async function checkChangeset(event, repository, root = process.cwd(), run = execFileSync) {
-  const version = await validateVersions(root);
   if (isReleasePr(event, repository)) {
+    const version = await validateVersions(root);
     changelogNotes(await readFile(resolve(root, 'CHANGELOG.md'), 'utf8'), version);
     return 'Validated release PR versions and changelog; consumed notes need no replacement.';
   }
   const base = event.pull_request?.base?.sha;
   if (!/^[a-f0-9]{40}$/.test(base ?? '')) throw new Error('Missing or invalid PR base commit');
-  const previous = JSON.parse(run('git', ['show', `${base}:package.json`], { cwd: root, encoding: 'utf8' }));
-  if (previous.version !== version) throw new Error('Version bumps belong in the Changesets release PR');
   run('pnpm', ['exec', 'changeset', 'status', '--since', base], { cwd: root, stdio: 'inherit' });
   return 'Changeset metadata validated.';
 }

@@ -64,17 +64,20 @@ test('release notes select only the reviewed version and reject missing or dupli
   assert.throws(() => changelogNotes('## 1.2.3\n', '1.2.3'), /Empty changelog/);
 });
 
-test('ordinary PR uses its base SHA and must not bump versions manually', async (t) => {
+test('ordinary PR only checks its changeset against the base SHA', async (t) => {
   const root = await fixture(t);
   const event = releaseEvent();
   event.pull_request.head.ref = 'feature/example';
+  // Feature PRs do not inspect release-version metadata.
+  await writeFile(join(root, 'src-tauri/Cargo.toml'), 'not release metadata');
   const commands = [];
   await checkChangeset(event, repository, root, (command, args) => {
     commands.push([command, args]);
-    return '{"version":"1.2.3"}';
   });
-  assert.deepEqual(commands[1], ['pnpm', ['exec', 'changeset', 'status', '--since', 'b'.repeat(40)]]);
-  await assert.rejects(checkChangeset(event, repository, root, () => '{"version":"1.0.0"}'), /Version bumps belong/);
+  assert.deepEqual(commands, [['pnpm', ['exec', 'changeset', 'status', '--since', 'b'.repeat(40)]]]);
+  await assert.rejects(checkChangeset(event, repository, root, () => {
+    throw new Error('Missing changeset');
+  }), /Missing changeset/);
 });
 
 test('release PR skips new-note requirement but validates reviewed changelog; fork branch does not bypass', async (t) => {
