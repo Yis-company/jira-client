@@ -32,4 +32,16 @@ Settings contains project setup, field metadata, account connection, and Light/D
 
 ## Checks
 
-`pnpm build` type-checks and builds the frontend. `pnpm test` checks connection safety and offline workspace behavior. `cargo test --manifest-path src-tauri/Cargo.toml --lib` checks native validation, REST pagination, complete downloads, and SQLite persistence/isolation, schema migration, durable writes, conflicts, and recovery. These tests use fixtures and do not access Jira or write to the operating system credential vault.
+`pnpm exec tsc -b` checks TypeScript. `pnpm test` checks connection safety and offline workspace behavior. `node --test scripts/*.test.mjs` checks release helpers against fixtures. `cargo test --locked --manifest-path src-tauri/Cargo.toml --lib` checks native validation, REST pagination, complete downloads, and SQLite persistence/isolation, schema migration, durable writes, conflicts, and recovery. These checks do not access Jira or write to the operating system credential vault.
+
+## Changes and releases
+
+Feature pull requests run one `Validation` job on Linux x64 (`ubuntu-22.04`): lint if configured, TypeScript checks, frontend tests, release-helper tests, Rust library tests, and a check for a changeset in the PR. There is currently no lint script. Rust tests compile test binaries; PRs do not build or package the desktop application. A releasable pull request includes a Changeset for `jira-client`; use `pnpm exec changeset` to describe the change and select its patch, minor, or major bump. For a change that should not alter the app release, use `pnpm exec changeset --empty`.
+
+After changesets merge to `main`, the Changesets workflow creates or updates one `changeset-release/main` pull request. Review its generated `CHANGELOG.md` and version updates in `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and the root `jira-client` entry in `src-tauri/Cargo.lock`. The generated PR must pass the same `Validation` job; its consumed changesets are replaced by validation of the generated versions and changelog. GitHub may require a maintainer to approve the bot-created workflow run; approve it and wait for checks to finish before merging. If another feature updates the PR, approve and wait for the latest run again. Do not manually bump versions in feature PRs.
+
+Merging the Changesets PR starts a release from that exact merge commit. The workflow creates or resumes a draft release, builds Linux x64, Linux ARM64, and macOS ARM64, then attaches two Linux installers per architecture (`.deb` and `.AppImage`) and the Apple Silicon `.dmg`. It publishes automatically only after all five installers pass validation and upload. A failed build leaves the release as a draft; rerun the failed jobs for that same workflow run and source commit.
+
+The Linux packages use an Ubuntu 22.04 baseline, and compatibility varies across distributions. Linux requires a graphical session and Secret Service for credential storage. The macOS DMG is ad-hoc signed and not notarized; macOS may require a manual Gatekeeper exception before opening it. Developer ID signing and notarization are not configured.
+
+The required PR check should be `Validation`. Checks remain advisory until branch protection requires pull requests, `Validation` to pass, and PR branches to be up to date with `main`; those repository settings have not been activated.

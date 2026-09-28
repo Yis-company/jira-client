@@ -1,0 +1,60 @@
+name: Changesets
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: changesets-main
+  cancel-in-progress: false
+
+jobs:
+  select:
+    name: Select Changesets mode
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      mode: ${{ steps.mode.outputs.mode }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - id: mode
+        uses: changesets/action/select-mode@v2
+
+  version:
+    name: Create or update version PR
+    if: needs.select.outputs.mode == 'version'
+    needs: select
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Version and synchronize desktop packages
+        uses: changesets/action/version@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: pnpm run version:release
+          pr-title: 'chore(release): version packages'
+          commit-message: 'chore(release): version packages'
+          pr-base-branch: main
