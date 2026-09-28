@@ -33,3 +33,11 @@ Settings contains project setup, field metadata, account connection, and Light/D
 ## Checks
 
 `pnpm build` type-checks and builds the frontend. `pnpm test` checks connection safety and offline workspace behavior. `cargo test --manifest-path src-tauri/Cargo.toml --lib` checks native validation, REST pagination, complete downloads, and SQLite persistence/isolation, schema migration, durable writes, conflicts, and recovery. These tests use fixtures and do not access Jira or write to the operating system credential vault.
+
+## Desktop builds and releases
+
+Pull requests and pushes to `main` run the frontend tests and build, Rust library tests, and native Tauri packaging on Linux x64 (`ubuntu-22.04`), Linux ARM64 (`ubuntu-22.04-arm`), and Apple Silicon (`macos-15`). Linux produces `.deb` and AppImage installers from an Ubuntu 22.04 baseline; compatibility still varies across distributions. Linux requires a graphical session and Secret Service for credential storage.
+
+Releases use manually bumped versions. Keep the version in `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and the root `jira-client` package entry in `src-tauri/Cargo.lock` aligned. After those changes are on `main`, push the matching stable tag, such as `v1.2.3`. The release workflow checks the tag and all four versions, confirms the tagged commit is on `main`, then builds all three targets. Once all builds pass, it creates or refreshes a draft GitHub Release with `.deb` and `.AppImage` installers for each Linux architecture and the Apple Silicon `.dmg` for review and manual publication.
+
+The macOS DMG is ad-hoc signed and not notarized. macOS may require a manual Gatekeeper exception before opening it. Developer ID signing and notarization are not configured.
