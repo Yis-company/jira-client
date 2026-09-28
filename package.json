@@ -8,7 +8,8 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
     "test": "vitest run",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "version:release": "pnpm exec changeset version && node scripts/sync-release-version.mjs"
   },
   "dependencies": {
     "@dnd-kit/dom": "^0.5.0",
@@ -29,6 +30,7 @@
     "tailwind-merge": "^3.3.1"
   },
   "devDependencies": {
+    "@changesets/cli": "3.0.3",
     "@tauri-apps/cli": "2.11.5",
     "@testing-library/jest-dom": "^6.8.0",
     "@testing-library/react": "^16.3.0",
