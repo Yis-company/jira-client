@@ -1,0 +1,165 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Initialize Matt and Impeccable — jira-client</title><style>
+:root{color-scheme:light dark;--foreground:light-dark(#23252b,#e4e5ea);--muted:light-dark(#686d78,#a1a4af);--border:light-dark(#d7d9e0,#42454e);--accent:light-dark(#6554c0,#b0a1f1);--code-background:light-dark(#f5f5f7,#202126);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--foreground);font-size:16px;line-height:1.65}
+*{box-sizing:border-box}html,body{margin:0}main{max-width:880px;margin:0 auto;padding-block:24px 48px}h1{font-size:clamp(1.65rem,4vw,2.25rem);line-height:1.2;margin:0 0 12px;letter-spacing:-.025em}h2,summary{font-size:1.2rem;font-weight:650;line-height:1.4}h3{font-size:1.02rem;margin-top:28px}p{margin:12px 0}h1+p{color:var(--muted);margin-bottom:28px}section,details{border-top:1px solid var(--border);padding-top:20px;margin-top:28px}summary{cursor:pointer;color:var(--accent);padding:4px 0}summary:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:4px}details[open]>summary{margin-bottom:18px}li{margin-block:8px}ol,ul{padding-left:24px}pre{background:var(--code-background);border-radius:8px;padding:16px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:.83rem;line-height:1.65}code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.88em;overflow-wrap:anywhere}pre code{font-size:inherit}a{color:var(--accent)}@media(max-width:480px){main{padding-block:14px 32px}pre{padding:12px}h2,summary{font-size:1.1rem}li{margin-block:10px}}@media print{details{display:block}details>summary{display:none}pre{break-inside:avoid}}
+</style></head><body><main><h1>Initialize Matt and Impeccable</h1>
+<p>1 November 2026 · jira-client · Documentation and configuration only</p>
+<section><h2>Decision to review</h2>
+<p>Add a small project record for Matt's engineering workflows and Impeccable's product context. Preserve the existing personal desktop pilot, architecture, UI, release process, and unrelated untracked skills.</p>
+<p><strong>Confirmed by Yi:</strong> development work belongs to the <code>jira-client</code> team in Linear; root pointers belong in <code>AGENTS.md</code>; future landing/showcase surfaces should use a stored comp-first default. App screens and documents remain code-first. Approval of this draft confirms the exact setup text below and the product record, including the <code>web</code> platform classification for the shared React UI inside Tauri.</p>
+</section><details><summary>What investigation established</summary>
+<ul>
+<li>Bound checkout: <code>/Users/yitam/Documents/code/ybtam/jira-client</code>; remote <code>Yis-company/jira-client</code>. GitHub Issues is enabled and the read-only issue query returned no issues. The remote alone does not establish tracker preference.</li>
+<li>Linear lookup confirmed workspace <code>Yis Company</code> (<code>https://linear.app/abrian</code>), team <code>Side Projects › jira-client</code>, key <code>JIR</code>, team ID <code>5311a7e3-5222-4b7d-811f-a55e7f5ff8d0</code>. Its issue query returned no issues. Existing statuses are Backlog, Todo, In Progress, In Review, Done, Canceled, and Duplicate. No tracker settings or issues were changed. The connector's shared-field-notes endpoint is unavailable; direct team/status reads supplied the necessary evidence.</li>
+<li>No root <code>AGENTS.md</code>, <code>CLAUDE.md</code>, <code>PRODUCT.md</code>, <code>DESIGN.md</code>, glossary, ADR directory, <code>docs/agents/</code>, <code>.scratch/</code>, or Impeccable configuration exists. No <code>.codegraph/</code> exists, so CodeGraph does not apply.</li>
+<li>Existing untracked <code>.agents/</code>, <code>.claude/</code>, <code>.hermes/</code>, and <code>.trae/</code> skill files predate this work. Preserve them. No Git conflicts were found.</li>
+<li>No triage skill is installed in this project or the active shared skill locations. Skip label configuration and label creation. The triage installation in the separate ZhongXin checkout does not configure this project.</li>
+<li>This is one React/Tauri app. <code>pnpm-workspace.yaml</code> contains an esbuild build allowance, not a package workspace. Single-context domain guidance is appropriate.</li>
+<li><code>README.md</code>, the approved desktop plan, and implementation notes establish Yi's personal one-site desktop pilot, cache-first reads, durable edits, explicit recovery, and deferred team onboarding. Current README behavior supersedes older slice notes where later features have shipped.</li>
+<li>Shared React/TypeScript/Vite UI runs inside Tauri 2. Rust owns Jira transport, credentials, SQLite, and outbox behavior; TanStack Query reads typed IPC. The owned product UI is desktop, with a shared web design language rather than separate iOS/Android surfaces.</li>
+</ul>
+</details><section><h2>Sequence, ownership, and dependencies</h2>
+<ol>
+<li><strong>Complete — Yi:</strong> selected Linear's jira-client team, <code>AGENTS.md</code>, and comp-first. No new audience or OS interview is needed; strong project evidence already answers those fields.</li>
+<li><strong>Codex:</strong> incorporate those answers into this draft and its HTML. <strong>Yi:</strong> review the exact proposed text using Plannotator. No setup files are written before approval.</li>
+<li><strong>Codex, after approval:</strong> create <code>AGENTS.md</code>, <code>docs/agents/issue-tracker.md</code>, <code>docs/agents/domain.md</code>, <code>PRODUCT.md</code>, and <code>.impeccable/config.json</code> with the confirmed comp-first default.</li>
+<li><strong>Codex:</strong> check exact content, links, scope, and Git diff; report completed setup and deliberate omissions. Application tests are unnecessary for this documentation/configuration-only change.</li>
+</ol>
+</section><details><summary>Exact proposed files</summary>
+<h3>AGENTS.md</h3>
+<pre><code class="language-markdown"># Project guidance
+
+## Agent skills
+
+### Issue tracker
+
+Track development work in Linear's `jira-client` team (`JIR`) in the Yis Company workspace. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Use the single-context layout and existing decision records described in `docs/agents/domain.md`.
+
+## Product context
+
+Read `PRODUCT.md` before product or UI work. Preserve the incumbent interface and confirmed constraints; setup does not authorize redesign or feature expansion.
+</code></pre>
+<h3>docs/agents/issue-tracker.md</h3>
+<pre><code class="language-markdown"># Issue tracker: Linear
+
+Development issues and specs live in Linear, in the `jira-client` team (`JIR`) under Side Projects in the Yis Company workspace: https://linear.app/abrian.
+
+- Team ID: `5311a7e3-5222-4b7d-811f-a55e7f5ff8d0`.
+- Issue identifiers use `JIR-&lt;number&gt;`.
+- The application's connected Jira Cloud site is product data. The GitHub remote `Yis-company/jira-client` hosts source and pull requests; development tickets belong in Linear.
+
+## Skill operations
+
+Use the connected Linear tools in the Yis Company workspace. Resolve and verify the workspace/team before writes; connection display names may differ from workspace names.
+
+- Fetch a ticket: retrieve its `JIR-&lt;number&gt;` identifier or Linear URL and read its description, comments, and relations relevant to the task.
+- Find work: list/search issues scoped to the team ID above, not all teams or the parent Side Projects team.
+- Publish to the issue tracker, when requested: create an issue in this team with the requested scope and acceptance conditions. Use a project only when the task or existing issue establishes one; none is configured here.
+- Updates, comments, state changes, and parent/blocking relations use Linear's corresponding operations when the task authorizes them. Verify the resulting issue and link after a write.
+- Existing workflow states are Backlog, Todo, In Progress, In Review, Done, Canceled, and Duplicate. Re-read the team's current states when changing status; do not create replacements.
+
+Pull requests remain code-review and release work, not an external request queue.
+
+This file records the destination and conventions; it does not independently authorize external writes. Triage labels are not configured because triage is not installed. Preserve the existing team workflow and labels.
+</code></pre>
+<h3>docs/agents/domain.md</h3>
+<pre><code class="language-markdown"># Domain docs
+
+## Layout and reading order
+
+This is a single-context application: React and Rust implement one desktop Jira workspace, not independent product domains.
+
+- Read root `GLOSSARY.md` if present. If a future `GLOSSARY-MAP.md` exists, follow its pointers for the topic instead.
+- Read relevant `docs/adr/` entries if present.
+- Missing glossary or ADR files are normal: proceed silently. Create them lazily only when domain modeling resolves a term or decision; do not scaffold empty documents.
+- Read `PRODUCT.md` for durable product truth and `README.md` for current supported behavior and release workflow.
+- Preserve the existing decisions in `docs/implementation/`, `docs/feasibility/2026-09-26.md`, and approved `.codex/plans/` records. These are historical slice records; use the current README and source to establish later behavior rather than treating every older deferral as current.
+
+## Consumer rules
+
+Use the glossary's vocabulary when it exists; do not substitute conflicting synonyms. Surface contradictions with relevant decisions instead of silently replacing them. Note material terminology gaps for domain modeling without expanding an unrelated task.
+
+Keep Jira's remote confirmation, the complete saved snapshot, pending local intent, and uncertain write outcomes distinct. Rust owns persistence, transport, and recovery; React reads typed IPC and owns presentation state. Preserve these existing boundaries unless Yi approves a change.
+</code></pre>
+<h3>PRODUCT.md</h3>
+<pre><code class="language-markdown"># Product
+
+&lt;!-- impeccable:product-schema 1 --&gt;
+
+## Platform
+
+web
+
+The owned interface is shared React UI in a Tauri desktop application. This classification describes its design language; it does not make the browser preview a supported Jira-connected product or imply iOS/Android support.
+
+## Users
+
+Yi is the primary user of this personal desktop pilot: review Jira work, make supported issue edits, and plan the current and future sprints from one local workspace. Team onboarding is deferred pending a separately approved authentication design.
+
+## Product Purpose
+
+Keep Jira Cloud work useful from the desktop when connectivity is slow or unavailable. Open downloaded work immediately, save supported edits durably, and make synchronization and recovery understandable without losing local intent. Jira remains the shared system of record.
+
+## Operating Context
+
+- One person and one Jira Cloud site, with project and Scrum-board selection. Cached data is partitioned by account, site, project, and board.
+- Current sprint, combined future-sprint/backlog planning, downloaded issues, Daily, focused issue detail, Settings, and Sync changes are the working surfaces. List and board share search and selection; Backlog is list-only.
+- Native desktop connection uses the person's standard API token in the OS credential vault. The browser preview cannot accept credentials or connect to Jira. No shared server is part of this pilot.
+- React uses typed IPC and TanStack Query. Rust owns Jira access, SQLite snapshots, durable edits, and synchronization. Frontend presentation storage contains the theme preference, not credentials or issue data.
+
+## Capabilities and Constraints
+
+- Saved work opens before online refresh. Only a complete successful download replaces the previous snapshot. Offline search covers downloaded work, not the entire Jira history. Attachment metadata is cached; attachment files are not downloaded.
+- Status, assignee, title, description, and next-sprint moves save locally and upload when connected. Editing follows discovered Jira capabilities and permission checks. Unsupported rich description content stays read-only rather than being rewritten destructively.
+- &quot;Saved locally&quot; and Jira confirmation are different outcomes. Pending changes remain reachable beyond current board results. Rejected requests, conflicts, and unknown outcomes are visible in Sync changes; an uncertain request is never blindly resent. Readback cannot guarantee every concurrent Jira race is detected.
+- Daily uses the saved sprint and observed successful-sync history. It discloses missing metadata and does not invent past burndown, capacity, holiday, or leave evidence.
+- Issue creation, comment editing, general field compatibility, sprint creation/lifecycle, release assignment, and team distribution remain later slices. Do not expose them as working actions merely because an older plan describes them.
+- Desktop platform intent includes macOS, Linux, and Windows. The current release workflow targets macOS ARM64 and Linux x64/ARM64; packaging and fixture checks do not establish native runtime parity. macOS signing/notarization and broader support claims remain limited as described in README.
+
+## Evidence on Hand
+
+- `README.md`: current workflows, supported edits, known limits, checks, and Changesets release process.
+- `docs/implementation/`: historical offline-read, durable-write, and workspace-UI decisions; later README behavior supersedes earlier slice deferrals.
+- `docs/feasibility/2026-09-26.md` and approved `.codex/plans/`: personal-pilot decision and scoped approval records.
+- `src/`, `src-tauri/`, and `tests/preview.*`: incumbent implementation and synthetic UI fixtures. Fixtures and previous build reports are not live Jira or cross-platform runtime proof.
+
+## Product Principles
+
+- Keep useful cached work available without waiting for the network.
+- Preserve local intent and explain its confirmation and recovery state.
+- Respect account isolation, credential boundaries, and Jira's actual capabilities.
+- Keep daily work focused; separate setup and recovery from routine browsing.
+- Describe supported behavior and observed evidence precisely; leave future scope explicit.
+
+## Accessibility &amp; Inclusion
+
+Preserve the approved accessibility requirements: keyboard access and alternatives to dragging, platform-appropriate shortcut modifiers, visible focus, modal focus restoration, labeled controls, non-color status cues, reduced motion, and WCAG AA text contrast. These are requirements, not a claim that every native platform or assistive technology has been verified.
+</code></pre>
+<h3>.impeccable/config.json</h3>
+<pre><code class="language-json">{
+  &quot;buildPath&quot;: &quot;comp&quot;
+}
+</code></pre>
+<p>Yi explicitly chose the stored comp-first default. Merge with any configuration that appears before implementation. This choice governs future landing/showcase surfaces; app screens and documents are code-first either way. Do not copy it into PRODUCT.md.</p>
+</details><section><h2>Deliberate omissions</h2>
+<ul>
+<li>No skill installation/synchronization, hooks, triage labels, glossary, ADR scaffolding, or design-system extraction. Installed skills alone do not constitute project setup; these small consumer records do.</li>
+<li>No <code>DESIGN.md</code> write. Preserve the incumbent interface and any design record that appears before implementation. Product init does not choose visual styles.</li>
+<li>No live-mode config/helper: this setup does not need browser variant editing of the native desktop UI. The existing synthetic preview remains the future UI-verification entry when appropriate.</li>
+<li>No application code, dependencies, release changes, changeset, Jira writes, credentials, external publication, commit, push, or deployment. A later PR can add an empty Changeset if required by repository validation; this task does not create a PR.</li>
+</ul>
+</section><section><h2>Acceptance and verification</h2>
+<ul>
+<li>Required answers and explicit Plannotator approval precede setup writes; the HTML includes all proposed text so approval is reviewable.</li>
+<li>Root pointers resolve to the chosen tracker, domain rules, and product file. PRODUCT.md includes the schema marker and bare <code>web</code> platform value.</li>
+<li>No unsupported features become product claims, and historical evidence stays distinguishable from current/runtime proof.</li>
+<li>Only approved setup files and this planning packet are added. Preserve all pre-existing untracked skill files and any intervening user edits.</li>
+<li>Run <code>git diff --check</code> plus focused file/link/config inspection, including new untracked files. Do not run or launch the app, contact Jira, or change release state for this setup.</li>
+</ul>
+</section><section><h2>Required review</h2>
+<p>Use <code>$html-plan</code> to render this Markdown to <code>plan.html</code> in this directory, then run:</p>
+<p><code>plannotator annotate &lt;absolute-plan.html&gt; --gate --json --require-approval --result-file &lt;absolute-review.json&gt;</code></p>
+<p>If changes are requested, revise the Markdown, regenerate the HTML, and review again. Dismissal is not approval. Matt's setup requires draft confirmation, Impeccable init requires a real answer/approval round before PRODUCT.md, and Yi's project rule prohibits implementation before this gate is approved.</p></section></main></body></html>
