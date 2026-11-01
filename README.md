@@ -32,6 +32,8 @@ Settings contains project setup, field metadata, account connection, and Light/D
 
 ## Checks
 
+`pnpm install` installs a pre-push hook that runs TypeScript, frontend tests, and release-helper tests before each push. It requires Node, pnpm, Git, and installed dependencies. Installation refuses to replace an existing pre-push hook or a configured `core.hooksPath`; integrate `scripts/pre-push.sh` into your own hook if needed. The hook checks the current working tree and can be bypassed with `git push --no-verify`, so CI remains authoritative.
+
 `pnpm exec tsc -b` checks TypeScript. `pnpm test` checks connection safety and offline workspace behavior. `node --test scripts/*.test.mjs` checks release helpers against fixtures. `cargo test --locked --manifest-path src-tauri/Cargo.toml --lib` checks native validation, REST pagination, complete downloads, and SQLite persistence/isolation, schema migration, durable writes, conflicts, and recovery. These checks do not access Jira or write to the operating system credential vault.
 
 ## Changes and releases
