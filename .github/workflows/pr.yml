@@ -39,10 +39,7 @@ jobs:
             libgtk-3-dev librsvg2-dev libssl-dev \
             libwebkit2gtk-4.1-dev pkg-config
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run --if-present lint
-      - run: pnpm exec tsc -b
-      - run: pnpm test
-      - run: node --test scripts/*.test.mjs
+      - run: pnpm check
       - name: Check PR changeset
         if: github.event_name == 'pull_request'
         run: node scripts/check-changeset.mjs
