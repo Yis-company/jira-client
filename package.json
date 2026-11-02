@@ -8,6 +8,7 @@
     "prepare": "node scripts/install-hooks.mjs",
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
+    "check": "tsc -b && pnpm test && node --test scripts/*.test.mjs",
     "test": "vitest run",
     "tauri": "tauri",
     "version:release": "pnpm exec changeset version && node scripts/sync-release-version.mjs"

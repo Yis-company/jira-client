@@ -1,0 +1,26 @@
+{
+  "window": {"start": "2026-10-26T00:00:00Z", "end_exclusive": "2026-11-02T00:00:00Z"},
+  "device": {"name": "MacBook Pro (Yi)", "environmentId": "17d3cb3b-7d63-4119-8d4f-ab0f49e7b15d"},
+  "project": {"name": "jira-client", "projectId": "41649481-7c81-4d99-b872-a4479f63d566", "workspace": "/Users/yitam/Documents/code/ybtam/jira-client"},
+  "repository": {"slug": "Yis-company/jira-client", "source": "git remote origin"},
+  "status": "active",
+  "sessions": [
+    {"threadId": "mcp:launch:cfcd289b59b8a7c0cef34a18f238697cdd4f5e4d6afb3ed26f43f0b4055281a3", "title": "jira-client: Initialize Matt and Impeccable", "provider": "codex/gpt-6.1-sol", "runs": 3, "first": "2026-11-01T08:19:24Z", "last": "2026-11-01T08:31:21Z", "items": 133, "read": "messages full", "pr": 6},
+    {"threadId": "mcp:launch:d9aa5e52f4ff6ae67312005743c308ead67741e72a9ca4872432b5860e09b1aa", "title": "jira-client: pre-push hooks", "provider": "codex/gpt-6.1-terra", "runs": 2, "first": "2026-11-01T15:50:06Z", "last": "2026-11-01T15:56:05Z", "items": 111, "read": "messages + activity full", "pr": 7},
+    {"codexRollout": "01a19632-07ae-7e92-bb3e-54c146ccb1bf", "kind": "guardian approval subagent of setup thread", "first": "2026-11-01T08:20:23Z", "last": "2026-11-01T08:30:57Z", "read": "aggregated outcomes only", "outcomes": {"allow_low": 10, "allow_medium": 2}}
+  ],
+  "childThreads": 0,
+  "claudeSessions": 0,
+  "pullRequests": [
+    {"number": 6, "merged": "2026-11-01T09:31:32Z", "reviews": 0, "inlineComments": 0, "issueComments": 1, "commits": 1, "checks": {"Validation": "success, completed 2026-11-01T09:34:14Z (after merge)"}},
+    {"number": 7, "merged": "2026-11-01T15:59:17Z", "reviews": 0, "inlineComments": 0, "issueComments": 1, "commits": 2, "checks": {"Validation": "success, completed 2026-11-01T15:57:49Z"}}
+  ],
+  "excluded": [{"pr": 5, "reason": "last updated 2026-10-24, outside window"}],
+  "gaps": ["CI job log text not opened; check-run conclusions/timestamps used"],
+  "findings": [
+    {"rank": 1, "severity": "high", "title": "main unprotected; PR #6 merged before Validation completed", "status": "open"},
+    {"rank": 2, "severity": "medium", "title": "pre-push triggered pnpm auto-install on first real push", "status": "fixed in hook (6cb0de7); repo-wide partial"},
+    {"rank": 3, "severity": "low-medium", "title": "check list duplicated in hook and CI; lint step is a no-op", "status": "open"},
+    {"rank": 4, "severity": "low", "title": "plan artifact commit convention inconsistent", "status": "open"}
+  ]
+}
